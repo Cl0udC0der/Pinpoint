@@ -259,12 +259,25 @@ function VariantD() {
   const maxKm = () => bands.at(-1);
   const bandIndexFor = km => Math.max(0, bands.findIndex(edge => km <= edge + 1e-9));
   const colourOf = i => PALETTE[i % PALETTE.length];
+  // Points around a geodesic circle of radiusKm (great-circle destination formula), for drawing band rings.
+  function ringPath(c, radiusKm, n = 96) {
+    const R = 6371, d = radiusKm / R, toRad = x => x * Math.PI / 180, toDeg = x => x * 180 / Math.PI;
+    const lat1 = toRad(c.lat), lng1 = toRad(c.lng);
+    return Array.from({ length: n }, (_, k) => {
+      const brg = 2 * Math.PI * k / n;
+      const lat2 = Math.asin(Math.sin(lat1) * Math.cos(d) + Math.cos(lat1) * Math.sin(d) * Math.cos(brg));
+      const lng2 = lng1 + Math.atan2(Math.sin(brg) * Math.sin(d) * Math.cos(lat1), Math.cos(d) - Math.sin(lat1) * Math.sin(lat2));
+      return { lat: toDeg(lat2), lng: toDeg(lng2) };
+    });
+  }
 
   drawFeatures(f => centreOn(f));
   const box = floatBox(`
     <div class="hint">Click the map to place the buffer, or centre it on a school. Drag the circle or its handles.</div>
-    <input id="q" placeholder="Search schools by name or ID…" style="width:100%;padding:6px;margin:6px 0">
+    <input id="q" placeholder="Search schools by name or ID…" style="width:100%;padding:6px;margin:6px 0 4px">
+    <select id="pick" style="width:100%;padding:4px;margin-bottom:4px"></select>
     <ul class="list" id="results" style="max-height:160px;overflow:auto;margin:0"></ul>
+    <label class="hint"><input id="biz" type="checkbox"> Show businesses (malls are filed under these)</label>
     <div id="centreName" style="margin:6px 0;font-weight:600"></div>
     <label>Radius <input id="r" type="range" min="100" step="50" style="width:150px"> <b id="rv"></b></label>
     <div style="margin:8px 0 4px;font-weight:600">Band edges</div>
@@ -275,7 +288,12 @@ function VariantD() {
 
   function renderResults() {
     const q = $('#q').value.trim().toLowerCase();
-    const hits = q ? FEATURES.filter(f => f.name.toLowerCase().includes(q) || f.id.toLowerCase().includes(q)) : [];
+    const matching = FEATURES.filter(f => !q || f.name.toLowerCase().includes(q) || f.id.toLowerCase().includes(q));
+    const opts = `<option value="">— choose a school (${matching.length}) —</option>` +
+      [...matching].sort((a, b) => a.name.localeCompare(b.name)).map(f => `<option value="${f.id}">${f.name} (${f.id})</option>`).join('');
+    if ($('#pick').dataset.opts !== opts) { $('#pick').innerHTML = opts; $('#pick').dataset.opts = opts; }
+    $('#pick').value = centredOn && matching.includes(centredOn) ? centredOn.id : '';
+    const hits = q ? matching : [];
     $('#results').innerHTML = hits.slice(0, 30).map(f =>
       `<li data-id="${f.id}" class="${centredOn && f.id === centredOn.id ? 'sel' : ''}"><span>${f.name}</span><span class="hint">${f.id}</span></li>`).join('')
       || (q ? '<li class="hint">No match.</li>' : '');
@@ -317,10 +335,16 @@ function VariantD() {
       return;
     }
     const c = ll(circle.getCenter()), km = circle.getRadius() / 1000, bi = bandIndexFor(km);
-    circle.setOptions({ fillColor: colourOf(bi), strokeColor: colourOf(bi) });
-    // Dashed guide rings for band edges the buffer has already passed.
-    bands.slice(0, bi).forEach((edge, i) => guides.push(new google.maps.Circle({ map, center: c, radius: edge * 1000, clickable: false,
-      fillOpacity: 0, strokeColor: colourOf(i), strokeOpacity: .9, strokeWeight: 1 })));
+    // The editable circle is just the outline + handles; each band reached is filled as its own ring in its own colour.
+    circle.setOptions({ fillOpacity: 0, strokeColor: colourOf(bi), strokeWeight: 3 });
+    let inner = 0;
+    bands.slice(0, bi + 1).forEach((edge, i) => {
+      const outer = Math.min(edge, km);
+      const paths = inner > 0 ? [ringPath(c, outer), ringPath(c, inner).reverse()] : [ringPath(c, outer)];
+      guides.push(new google.maps.Polygon({ map, paths, clickable: false, fillColor: colourOf(i), fillOpacity: .22,
+        strokeColor: colourOf(i), strokeOpacity: .9, strokeWeight: 1 }));
+      inner = edge;
+    });
 
     const perBand = bands.map(() => []);
     const inside = FEATURES.filter(f => (!centredOn || f.id !== centredOn.id) && distanceKm(c, f) <= km);
@@ -343,6 +367,8 @@ function VariantD() {
 
   const click = map.addListener('click', e => { centredOn = null; ensureCircle(e.latLng, Math.min(+$('#r').value || 1000, maxKm() * 1000)); update(); });
   $('#q').addEventListener('input', renderResults);
+  $('#pick').addEventListener('change', e => { if (e.target.value) centreOn(FEATURES.find(f => f.id === e.target.value)); });
+  $('#biz').addEventListener('change', e => map.setOptions({ styles: poiStyles(e.target.checked) }));
   $('#results').addEventListener('click', e => { const li = e.target.closest('li[data-id]'); if (li) centreOn(FEATURES.find(f => f.id === li.dataset.id)); });
   $('#r').addEventListener('input', e => { if (circle) circle.setRadius(+e.target.value); });
   $('#bandRows').addEventListener('change', e => {
@@ -363,7 +389,7 @@ function VariantD() {
   $('#r').max = maxKm() * 1000; $('#r').value = 1000;
   renderBandRows();
   update();
-  return () => { click.remove(); circle && circle.setMap(null); guides.forEach(g => g.setMap(null)); };
+  return () => { click.remove(); circle && circle.setMap(null); guides.forEach(g => g.setMap(null)); map.setOptions({ styles: poiStyles(false) }); };
 }
 
 // ---------- switcher ----------
@@ -387,8 +413,19 @@ addEventListener('keydown', e => {
   if (e.key === 'ArrowRight') cycle(1);
 });
 
+// Hide Google's own landmarks except schools, parks and attractions (museums). Malls sit under poi.business,
+// which Google styles can't split from shops/restaurants, so businesses are a toggle.
+function poiStyles(showBusiness) {
+  return [
+    { featureType: 'poi', stylers: [{ visibility: 'off' }] },
+    { featureType: 'transit.station', stylers: [{ visibility: 'off' }] },
+    ...['poi.school', 'poi.park', 'poi.attraction', ...(showBusiness ? ['poi.business'] : [])]
+      .map(featureType => ({ featureType, stylers: [{ visibility: 'on' }] })),
+  ];
+}
+
 window.initMap = () => {
-  map = new google.maps.Map(document.getElementById('map'), { center: ORIGIN, zoom: 13, clickableIcons: false, streetViewControl: false });
+  map = new google.maps.Map(document.getElementById('map'), { center: ORIGIN, zoom: 13, clickableIcons: false, streetViewControl: false, styles: poiStyles(false) });
   render(current);
 };
 
