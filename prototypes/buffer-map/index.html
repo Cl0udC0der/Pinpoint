@@ -3,9 +3,11 @@
   PROTOTYPE: throwaway. Lives on branch prototype/buffer-map, never on main.
 
   Question: what should designating a Buffer Map's centre look and feel like?
-  Plan: three structurally different variants on one page, switchable via ?variant=A|B|C
+  Plan: structurally different variants on one page, switchable via ?variant=D|A|B|C
   and the floating bottom bar (or the ← / → keys).
 
+    D  Hybrid (default)    A's flexible buffer + C's band edges + school search. Place by click or centre on a
+                           school; the buffer takes the colour of the band its radius has reached; last edge = max radius
     A  Click to drop       full-bleed map; click anywhere to set the centre; drag the circle's handles to resize
     B  Pin + results list  side panel listing Features inside, sorted by Distance; draggable centre pin
     C  Feature as centre   pick a school as the centre; concentric distance bands with counts per band
@@ -68,9 +70,11 @@
 let seed = 42;
 const rand = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
 const ORIGIN = { lat: 14.6507, lng: 121.0494 }; // Quezon City
+const NAME_A = ['St. Mary\'s', 'Holy Cross', 'San Lorenzo', 'Our Lady of Fatima', 'Sacred Heart', 'Mabuhay', 'Bagong Pag-asa', 'Lourdes', 'Don Bosco', 'Maharlika', 'St. Joseph', 'Bright Minds'];
+const NAME_B = ['Academy', 'School', 'Learning Center', 'Montessori', 'Christian School', 'College'];
 const FEATURES = Array.from({ length: 60 }, (_, i) => ({
   id: 'S' + String(i + 1).padStart(3, '0'),
-  name: 'Sample School ' + (i + 1),
+  name: `${NAME_A[i % NAME_A.length]} ${NAME_B[Math.floor(i / NAME_A.length) % NAME_B.length]}`,
   lat: ORIGIN.lat + (rand() - 0.5) * 0.14,
   lng: ORIGIN.lng + (rand() - 0.5) * 0.14,
 }));
@@ -86,8 +90,8 @@ const ll = p => ({ lat: +p.lat().toFixed(5), lng: +p.lng().toFixed(5) });
 // ---------- shared plumbing ----------
 const params = new URLSearchParams(location.search);
 const KEY = params.get('key');
-const VARIANTS = ['A', 'B', 'C'];
-const NAMES = { A: 'Click to drop', B: 'Pin + results list', C: 'Feature as centre' };
+const VARIANTS = ['D', 'A', 'B', 'C'];
+const NAMES = { A: 'Click to drop', B: 'Pin + results list', C: 'Feature as centre', D: 'Hybrid: flexible buffer + band edges' };
 let map, featureMarkers = [], cleanup = () => {};
 
 function showState(obj) { document.getElementById('state').textContent = JSON.stringify(obj, null, 2); }
@@ -246,9 +250,125 @@ function VariantC() {
   return () => rings.forEach(r => r.setMap(null));
 }
 
+// ---------- Variant D: A's flexible buffer + C's band edges + school search ----------
+// The buffer takes the colour of the band its radius has reached. The last band edge is the max radius.
+function VariantD() {
+  const PALETTE = ['#0b8043', '#f9ab00', '#e8710a', '#d93025', '#8430ce', '#1a73e8'];
+  const bands = [1, 2, 3];               // km band edges, ascending; last = max radius
+  let circle = null, centredOn = null, guides = [];
+  const maxKm = () => bands.at(-1);
+  const bandIndexFor = km => Math.max(0, bands.findIndex(edge => km <= edge + 1e-9));
+  const colourOf = i => PALETTE[i % PALETTE.length];
+
+  drawFeatures(f => centreOn(f));
+  const box = floatBox(`
+    <div class="hint">Click the map to place the buffer, or centre it on a school. Drag the circle or its handles.</div>
+    <input id="q" placeholder="Search schools by name or ID…" style="width:100%;padding:6px;margin:6px 0">
+    <ul class="list" id="results" style="max-height:160px;overflow:auto;margin:0"></ul>
+    <div id="centreName" style="margin:6px 0;font-weight:600"></div>
+    <label>Radius <input id="r" type="range" min="100" step="50" style="width:150px"> <b id="rv"></b></label>
+    <div style="margin:8px 0 4px;font-weight:600">Band edges</div>
+    <div id="bandRows"></div>
+    <button id="addBand">+ add band</button>
+    <div id="counts" style="margin-top:8px"></div>`, { top: '10px', left: '10px', width: '300px', maxHeight: 'calc(100% - 100px)', overflow: 'auto' });
+  const $ = s => box.querySelector(s);
+
+  function renderResults() {
+    const q = $('#q').value.trim().toLowerCase();
+    const hits = q ? FEATURES.filter(f => f.name.toLowerCase().includes(q) || f.id.toLowerCase().includes(q)) : [];
+    $('#results').innerHTML = hits.slice(0, 30).map(f =>
+      `<li data-id="${f.id}" class="${centredOn && f.id === centredOn.id ? 'sel' : ''}"><span>${f.name}</span><span class="hint">${f.id}</span></li>`).join('')
+      || (q ? '<li class="hint">No match.</li>' : '');
+  }
+  function renderBandRows() {
+    let prev = 0;
+    $('#bandRows').innerHTML = bands.map((edge, i) => {
+      const row = `<div class="band"><span class="swatch" style="background:${colourOf(i)}"></span>${prev} –
+        <input data-i="${i}" type="number" step="0.1" min="0.1" value="${edge}" style="width:60px"> km
+        ${bands.length > 1 ? `<button data-del="${i}" title="Remove band">✕</button>` : ''}</div>`;
+      prev = edge; return row;
+    }).join('');
+  }
+  function ensureCircle(at, radiusM) {
+    if (circle) { circle.setCenter(at); return; }
+    circle = new google.maps.Circle({ map, center: at, radius: radiusM, editable: true, draggable: true, strokeWeight: 2, fillOpacity: .12 });
+    circle.addListener('radius_changed', () => {
+      if (circle.getRadius() > maxKm() * 1000) return circle.setRadius(maxKm() * 1000); // clamp; re-fires
+      update();
+    });
+    circle.addListener('dragend', () => { centredOn = null; update(); });
+    circle.addListener('center_changed', update);
+  }
+  function centreOn(f) {
+    centredOn = f;
+    ensureCircle(f, Math.min(+$('#r').value || 1000, maxKm() * 1000));
+    map.panTo(f);
+    update();
+  }
+
+  function update() {
+    guides.forEach(g => g.setMap(null)); guides = [];
+    $('#r').max = maxKm() * 1000;
+    renderResults();
+    if (!circle) {
+      $('#rv').textContent = '–'; $('#centreName').textContent = 'No buffer placed yet.'; $('#counts').innerHTML = '';
+      colourFeatures(() => null);
+      showState({ variant: 'D', centre: null, bandEdgesKm: [...bands] });
+      return;
+    }
+    const c = ll(circle.getCenter()), km = circle.getRadius() / 1000, bi = bandIndexFor(km);
+    circle.setOptions({ fillColor: colourOf(bi), strokeColor: colourOf(bi) });
+    // Dashed guide rings for band edges the buffer has already passed.
+    bands.slice(0, bi).forEach((edge, i) => guides.push(new google.maps.Circle({ map, center: c, radius: edge * 1000, clickable: false,
+      fillOpacity: 0, strokeColor: colourOf(i), strokeOpacity: .9, strokeWeight: 1 })));
+
+    const perBand = bands.map(() => []);
+    const inside = FEATURES.filter(f => (!centredOn || f.id !== centredOn.id) && distanceKm(c, f) <= km);
+    inside.forEach(f => perBand[bandIndexFor(distanceKm(c, f))].push(f.id));
+    const bandOfId = Object.fromEntries(perBand.flatMap((ids, i) => ids.map(id => [id, i])));
+    colourFeatures(f => centredOn && f.id === centredOn.id ? '#000' : f.id in bandOfId ? colourOf(bandOfId[f.id]) : null);
+
+    $('#r').value = Math.round(circle.getRadius());
+    $('#rv').textContent = `${km.toFixed(2)} km`;
+    $('#centreName').innerHTML = centredOn ? `Centred on: ${centredOn.name} <span class="hint">${centredOn.id}</span>` : 'Centred on: placed point';
+    let prev = 0;
+    $('#counts').innerHTML = `<div><span class="big">${inside.length}</span> Features inside</div>` + bands.slice(0, bi + 1).map((edge, i) => {
+      const row = `<div class="band"><span class="swatch" style="background:${colourOf(i)}"></span>${prev}–${Math.min(edge, km).toFixed(2)} km: <b>${perBand[i].length}</b></div>`;
+      prev = edge; return row;
+    }).join('');
+    showState({ variant: 'D', centre: c, centredOn: centredOn && centredOn.id, radiusKm: +km.toFixed(3), maxKm: maxKm(),
+      bandEdgesKm: [...bands], currentBand: bi + 1, insideCount: inside.length,
+      perBand: bands.map((edge, i) => ({ toKm: edge, count: perBand[i].length, ids: perBand[i] })) });
+  }
+
+  const click = map.addListener('click', e => { centredOn = null; ensureCircle(e.latLng, Math.min(+$('#r').value || 1000, maxKm() * 1000)); update(); });
+  $('#q').addEventListener('input', renderResults);
+  $('#results').addEventListener('click', e => { const li = e.target.closest('li[data-id]'); if (li) centreOn(FEATURES.find(f => f.id === li.dataset.id)); });
+  $('#r').addEventListener('input', e => { if (circle) circle.setRadius(+e.target.value); });
+  $('#bandRows').addEventListener('change', e => {
+    if (e.target.dataset.i === undefined) return;
+    bands[+e.target.dataset.i] = Math.max(0.1, +e.target.value);
+    bands.sort((a, b) => a - b);
+    renderBandRows();
+    if (circle && circle.getRadius() > maxKm() * 1000) circle.setRadius(maxKm() * 1000); else update();
+  });
+  $('#bandRows').addEventListener('click', e => {
+    if (e.target.dataset.del === undefined) return;
+    bands.splice(+e.target.dataset.del, 1);
+    renderBandRows();
+    if (circle && circle.getRadius() > maxKm() * 1000) circle.setRadius(maxKm() * 1000); else update();
+  });
+  $('#addBand').addEventListener('click', () => { bands.push(+(maxKm() + 1).toFixed(1)); renderBandRows(); update(); });
+
+  $('#r').max = maxKm() * 1000; $('#r').value = 1000;
+  renderBandRows();
+  update();
+  return () => { click.remove(); circle && circle.setMap(null); guides.forEach(g => g.setMap(null)); };
+}
+
 // ---------- switcher ----------
-const RENDER = { A: VariantA, B: VariantB, C: VariantC };
-let current = VARIANTS.includes(params.get('variant')) ? params.get('variant') : 'A';
+const RENDER = { A: VariantA, B: VariantB, C: VariantC, D: VariantD };
+let current = VARIANTS.includes(params.get('variant')) ? params.get('variant') : 'D';
 
 function render(v) {
   clearAll();
