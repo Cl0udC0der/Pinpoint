@@ -1,0 +1,288 @@
+<!doctype html>
+<!--
+  PROTOTYPE: throwaway. Lives on branch prototype/buffer-map, never on main.
+
+  Question: what should designating a Buffer Map's centre look and feel like?
+  Plan: three structurally different variants on one page, switchable via ?variant=A|B|C
+  and the floating bottom bar (or the ← / → keys).
+
+    A  Click to drop       full-bleed map; click anywhere to set the centre; drag the circle's handles to resize
+    B  Pin + results list  side panel listing Features inside, sorted by Distance; draggable centre pin
+    C  Feature as centre   pick a school as the centre; concentric distance bands with counts per band
+
+  Features are SYNTHETIC (random points around Quezon City). The real Dataset isn't geocoded yet.
+  Distance is straight-line (haversine), per CONTEXT.md.
+
+  Run:  python -m http.server 8000 -d prototypes/buffer-map
+  Open: http://localhost:8000/?key=YOUR_GOOGLE_MAPS_KEY&variant=A
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Buffer Map Prototype</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; font: 14px/1.4 system-ui, sans-serif; color: #1d2329; background: #fff; }
+  #app { height: 100%; display: grid; grid-template-columns: 1fr; }
+  #app.with-panel { grid-template-columns: 340px 1fr; }
+  #panel { overflow: auto; border-right: 1px solid #ddd; padding: 12px; display: none; }
+  #app.with-panel #panel { display: block; }
+  #map { height: 100%; }
+
+  .float { position: absolute; background: #fff; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,.2); padding: 10px 12px; }
+  .hint { color: #666; font-size: 12px; }
+  .big { font-size: 28px; font-weight: 700; }
+  ul.list { list-style: none; padding: 0; margin: 8px 0; }
+  ul.list li { padding: 6px 4px; border-bottom: 1px solid #eee; cursor: pointer; display: flex; justify-content: space-between; gap: 8px; }
+  ul.list li:hover { background: #f3f6fa; }
+  ul.list li.sel { background: #e3edff; font-weight: 600; }
+  .presets button { margin-right: 4px; }
+  .band { display: flex; align-items: center; gap: 8px; margin: 4px 0; }
+  .swatch { width: 14px; height: 14px; border-radius: 3px; display: inline-block; }
+
+  #state { position: absolute; right: 10px; bottom: 70px; max-width: 320px; max-height: 40%; overflow: auto;
+           background: #111; color: #9fe; font: 11px/1.35 ui-monospace, monospace; padding: 8px; border-radius: 6px; opacity: .9; white-space: pre; }
+  #switcher { position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%); z-index: 10;
+              background: #111; color: #fff; border-radius: 999px; padding: 6px 8px; display: flex; align-items: center; gap: 8px;
+              box-shadow: 0 4px 14px rgba(0,0,0,.4); font-weight: 600; }
+  #switcher button { background: #333; color: #fff; border: 0; border-radius: 999px; width: 30px; height: 30px; cursor: pointer; font-size: 16px; }
+  #keygate { max-width: 420px; margin: 15vh auto; padding: 16px; }
+  #keygate input { width: 100%; padding: 8px; margin: 8px 0; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="panel"></div>
+  <div id="map"></div>
+</div>
+<div id="state"></div>
+<div id="switcher">
+  <button id="prev" title="Previous variant (←)">‹</button>
+  <span id="vlabel"></span>
+  <button id="next" title="Next variant (→)">›</button>
+</div>
+
+<script>
+// ---------- synthetic Features (seeded, so every reload is the same) ----------
+let seed = 42;
+const rand = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+const ORIGIN = { lat: 14.6507, lng: 121.0494 }; // Quezon City
+const FEATURES = Array.from({ length: 60 }, (_, i) => ({
+  id: 'S' + String(i + 1).padStart(3, '0'),
+  name: 'Sample School ' + (i + 1),
+  lat: ORIGIN.lat + (rand() - 0.5) * 0.14,
+  lng: ORIGIN.lng + (rand() - 0.5) * 0.14,
+}));
+
+function distanceKm(a, b) {
+  const R = 6371, toRad = d => d * Math.PI / 180;
+  const dLat = toRad(b.lat - a.lat), dLng = toRad(b.lng - a.lng);
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(a.lat)) * Math.cos(toRad(b.lat)) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+const ll = p => ({ lat: +p.lat().toFixed(5), lng: +p.lng().toFixed(5) });
+
+// ---------- shared plumbing ----------
+const params = new URLSearchParams(location.search);
+const KEY = params.get('key');
+const VARIANTS = ['A', 'B', 'C'];
+const NAMES = { A: 'Click to drop', B: 'Pin + results list', C: 'Feature as centre' };
+let map, featureMarkers = [], cleanup = () => {};
+
+function showState(obj) { document.getElementById('state').textContent = JSON.stringify(obj, null, 2); }
+
+const dot = (color, scale = 6) => ({ path: google.maps.SymbolPath.CIRCLE, scale, fillColor: color, fillOpacity: 1, strokeColor: '#fff', strokeWeight: 1.5 });
+
+function drawFeatures(onClick) {
+  featureMarkers = FEATURES.map(f => {
+    const m = new google.maps.Marker({ map, position: f, icon: dot('#888'), title: f.name });
+    if (onClick) m.addListener('click', () => onClick(f));
+    return m;
+  });
+}
+function colourFeatures(colourFor) {
+  FEATURES.forEach((f, i) => featureMarkers[i].setIcon(dot(colourFor(f) || '#bbb', colourFor(f) ? 7 : 5)));
+}
+function clearAll() {
+  cleanup();
+  featureMarkers.forEach(m => m.setMap(null));
+  featureMarkers = [];
+  document.getElementById('panel').innerHTML = '';
+  document.querySelectorAll('.float').forEach(el => el.remove());
+  document.getElementById('app').className = '';
+}
+function floatBox(html, style) {
+  const el = document.createElement('div');
+  el.className = 'float';
+  Object.assign(el.style, style);
+  el.innerHTML = html;
+  document.body.appendChild(el);
+  return el;
+}
+
+// ---------- Variant A: click to drop ----------
+function VariantA() {
+  let circle = null;
+  drawFeatures();
+  const box = floatBox(`
+    <div class="hint">Click the map to set the centre. Drag the circle or its handles.</div>
+    <label>Radius <input id="r" type="range" min="250" max="10000" step="250" value="2000"> <b id="rv">2.0 km</b></label>
+    <div><span class="big" id="count">–</span> Features inside</div>`, { top: '10px', left: '10px' });
+  const r = box.querySelector('#r');
+
+  function update() {
+    if (!circle) { colourFeatures(() => null); showState({ variant: 'A', centre: null, radiusM: +r.value }); return; }
+    const c = ll(circle.getCenter()), km = circle.getRadius() / 1000;
+    const inside = FEATURES.filter(f => distanceKm(c, f) <= km);
+    const ids = new Set(inside.map(f => f.id));
+    colourFeatures(f => ids.has(f.id) ? '#d93025' : null);
+    box.querySelector('#count').textContent = inside.length;
+    box.querySelector('#rv').textContent = km.toFixed(1) + ' km';
+    r.value = Math.round(circle.getRadius());
+    showState({ variant: 'A', centre: c, radiusM: Math.round(circle.getRadius()), insideCount: inside.length, insideIds: inside.map(f => f.id) });
+  }
+  const click = map.addListener('click', e => {
+    if (circle) circle.setCenter(e.latLng);
+    else {
+      circle = new google.maps.Circle({ map, center: e.latLng, radius: +r.value, editable: true, draggable: true,
+        fillColor: '#d93025', fillOpacity: .12, strokeColor: '#d93025', strokeWeight: 2 });
+      circle.addListener('center_changed', update);
+      circle.addListener('radius_changed', update);
+    }
+    update();
+  });
+  r.addEventListener('input', () => { box.querySelector('#rv').textContent = (r.value / 1000).toFixed(1) + ' km'; if (circle) circle.setRadius(+r.value); else update(); });
+  update();
+  return () => { click.remove(); circle && circle.setMap(null); };
+}
+
+// ---------- Variant B: draggable pin + ranked results list ----------
+function VariantB() {
+  document.getElementById('app').className = 'with-panel';
+  let radiusKm = 2, selected = null;
+  const panel = document.getElementById('panel');
+  panel.innerHTML = `
+    <h3 style="margin:0 0 6px">Buffer Map</h3>
+    <div class="hint">Drag the blue pin, or right-click the map to move it there.</div>
+    <p><label>Centre <input id="lat" size="8"> <input id="lng" size="9"> <button id="go">Set</button></label></p>
+    <p class="presets">Radius: ${[0.5, 1, 2, 3, 5].map(k => `<button data-k="${k}">${k} km</button>`).join('')}
+       <input id="rk" type="number" step="0.1" min="0.1" style="width:60px"> km</p>
+    <div><span class="big" id="count"></span> Features within <b id="rlabel"></b></div>
+    <ul class="list" id="list"></ul>`;
+  drawFeatures(f => { selected = f.id; update(); });
+  const pin = new google.maps.Marker({ map, position: ORIGIN, draggable: true, zIndex: 999, title: 'Centre' });
+  const circle = new google.maps.Circle({ map, center: ORIGIN, radius: radiusKm * 1000, clickable: false,
+    fillColor: '#1a73e8', fillOpacity: .1, strokeColor: '#1a73e8', strokeWeight: 2 });
+
+  function update() {
+    const c = ll(pin.getPosition());
+    circle.setCenter(c); circle.setRadius(radiusKm * 1000);
+    const ranked = FEATURES.map(f => ({ ...f, d: distanceKm(c, f) })).filter(f => f.d <= radiusKm).sort((a, b) => a.d - b.d);
+    const ids = new Set(ranked.map(f => f.id));
+    colourFeatures(f => f.id === selected ? '#f9ab00' : ids.has(f.id) ? '#1a73e8' : null);
+    panel.querySelector('#lat').value = c.lat; panel.querySelector('#lng').value = c.lng;
+    panel.querySelector('#rk').value = radiusKm;
+    panel.querySelector('#count').textContent = ranked.length;
+    panel.querySelector('#rlabel').textContent = radiusKm + ' km';
+    panel.querySelector('#list').innerHTML = ranked.map(f =>
+      `<li data-id="${f.id}" class="${f.id === selected ? 'sel' : ''}"><span>${f.name}</span><span>${f.d.toFixed(2)} km</span></li>`).join('')
+      || '<li class="hint">No Features inside.</li>';
+    showState({ variant: 'B', centre: c, radiusKm, insideCount: ranked.length, selected,
+      nearest: ranked.slice(0, 5).map(f => `${f.id} @ ${f.d.toFixed(2)} km`) });
+  }
+  panel.addEventListener('click', e => {
+    if (e.target.dataset.k) { radiusKm = +e.target.dataset.k; update(); }
+    const li = e.target.closest('li[data-id]');
+    if (li) { selected = li.dataset.id; map.panTo(FEATURES.find(f => f.id === selected)); update(); }
+    if (e.target.id === 'go') { pin.setPosition({ lat: +panel.querySelector('#lat').value, lng: +panel.querySelector('#lng').value }); map.panTo(pin.getPosition()); update(); }
+  });
+  panel.querySelector('#rk').addEventListener('change', e => { radiusKm = +e.target.value; update(); });
+  pin.addListener('drag', update);
+  const rc = map.addListener('rightclick', e => { pin.setPosition(e.latLng); update(); });
+  update();
+  return () => { pin.setMap(null); circle.setMap(null); rc.remove(); };
+}
+
+// ---------- Variant C: a Feature is the centre; concentric bands ----------
+function VariantC() {
+  const BANDS = [{ km: 1, c: '#0b8043' }, { km: 2, c: '#f9ab00' }, { km: 3, c: '#e8710a' }];
+  let centre = null, rings = [];
+  drawFeatures(f => { centre = f; update(); });
+  const box = floatBox(`
+    <div class="hint">Click a school to make it the centre.</div>
+    <select id="pick"><option value="">— or choose a school —</option>${FEATURES.map(f => `<option value="${f.id}">${f.name}</option>`).join('')}</select>
+    <div id="centreName" style="margin:6px 0;font-weight:600"></div>
+    <div id="bands"></div>
+    <label class="hint">Band edges (km): <input id="edges" value="1,2,3" size="8"></label>`, { top: '10px', left: '10px', width: '260px' });
+
+  function update() {
+    rings.forEach(r => r.setMap(null)); rings = [];
+    if (!centre) { colourFeatures(() => null); showState({ variant: 'C', centre: null }); return; }
+    box.querySelector('#pick').value = centre.id;
+    box.querySelector('#centreName').textContent = 'Centre: ' + centre.name;
+    const counts = BANDS.map(() => []);
+    const bandOf = f => BANDS.findIndex(b => distanceKm(centre, f) <= b.km);
+    FEATURES.forEach(f => { if (f.id !== centre.id) { const i = bandOf(f); if (i >= 0) counts[i].push(f.id); } });
+    [...BANDS].reverse().forEach(b => rings.push(new google.maps.Circle({ map, center: centre, radius: b.km * 1000, clickable: false,
+      fillColor: b.c, fillOpacity: .08, strokeColor: b.c, strokeWeight: 2 })));
+    colourFeatures(f => f.id === centre.id ? '#000' : (i => i >= 0 ? BANDS[i].c : null)(bandOf(f)));
+    let prev = 0;
+    box.querySelector('#bands').innerHTML = BANDS.map((b, i) => {
+      const row = `<div class="band"><span class="swatch" style="background:${b.c}"></span>${prev}–${b.km} km: <b>${counts[i].length}</b></div>`;
+      prev = b.km; return row;
+    }).join('') + `<div class="hint">Total within ${BANDS.at(-1).km} km: ${counts.flat().length}</div>`;
+    showState({ variant: 'C', centre: { id: centre.id, lat: +centre.lat.toFixed(5), lng: +centre.lng.toFixed(5) },
+      bands: BANDS.map((b, i) => ({ toKm: b.km, count: counts[i].length, ids: counts[i] })) });
+  }
+  box.querySelector('#pick').addEventListener('change', e => { centre = FEATURES.find(f => f.id === e.target.value) || null; if (centre) map.panTo(centre); update(); });
+  box.querySelector('#edges').addEventListener('change', e => {
+    const kms = e.target.value.split(',').map(Number).filter(n => n > 0).sort((a, b) => a - b);
+    const palette = ['#0b8043', '#f9ab00', '#e8710a', '#d93025', '#8430ce'];
+    BANDS.splice(0, BANDS.length, ...kms.map((km, i) => ({ km, c: palette[i % palette.length] })));
+    update();
+  });
+  update();
+  return () => rings.forEach(r => r.setMap(null));
+}
+
+// ---------- switcher ----------
+const RENDER = { A: VariantA, B: VariantB, C: VariantC };
+let current = VARIANTS.includes(params.get('variant')) ? params.get('variant') : 'A';
+
+function render(v) {
+  clearAll();
+  current = v;
+  params.set('variant', v);
+  history.replaceState(null, '', '?' + params);
+  document.getElementById('vlabel').textContent = `${v} (${NAMES[v]})`;
+  cleanup = RENDER[v]();
+}
+function cycle(step) { render(VARIANTS[(VARIANTS.indexOf(current) + step + VARIANTS.length) % VARIANTS.length]); }
+document.getElementById('prev').onclick = () => cycle(-1);
+document.getElementById('next').onclick = () => cycle(1);
+addEventListener('keydown', e => {
+  if (e.target.closest('input, textarea, select, [contenteditable]')) return;
+  if (e.key === 'ArrowLeft') cycle(-1);
+  if (e.key === 'ArrowRight') cycle(1);
+});
+
+window.initMap = () => {
+  map = new google.maps.Map(document.getElementById('map'), { center: ORIGIN, zoom: 13, clickableIcons: false, streetViewControl: false });
+  render(current);
+};
+
+if (KEY) {
+  const s = document.createElement('script');
+  s.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(KEY)}&callback=initMap&v=weekly`;
+  s.async = true;
+  document.head.appendChild(s);
+} else {
+  document.getElementById('switcher').style.display = 'none';
+  document.getElementById('app').innerHTML = `<form id="keygate"><h3>Buffer Map prototype</h3>
+    <p>Paste a Google Maps JavaScript API key. It goes into the URL only and is never stored.</p>
+    <input name="key" placeholder="AIza..." autofocus><button>Load map</button></form>`;
+}
+</script>
+</body>
+</html>
