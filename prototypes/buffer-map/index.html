@@ -6,8 +6,10 @@
   Plan: structurally different variants on one page, switchable via ?variant=D|A|B|C
   and the floating bottom bar (or the ← / → keys).
 
-    D  Hybrid (default)    A's flexible buffer + C's band edges + school search. Place by click or centre on a
-                           school; the buffer takes the colour of the band its radius has reached; last edge = max radius
+    D  Hybrid (default)    A's flexible buffer + C's band edges + school search. Place via the drop-pin button
+                           (drag it onto the map, or click it to toggle pin mode) or centre on a
+                           school; the buffer takes the colour of the band its radius has reached; last edge = max radius (10 km cap).
+                           Floating, minimisable Landmarks menu toggles each Google landmark category
     A  Click to drop       full-bleed map; click anywhere to set the centre; drag the circle's handles to resize
     B  Pin + results list  side panel listing Features inside, sorted by Distance; draggable centre pin
     C  Feature as centre   pick a school as the centre; concentric distance bands with counts per band
@@ -251,11 +253,13 @@ function VariantC() {
 }
 
 // ---------- Variant D: A's flexible buffer + C's band edges + school search ----------
-// The buffer takes the colour of the band its radius has reached. The last band edge is the max radius.
+// The buffer takes the colour of the band its radius has reached. The last band edge is the max radius (capped at 10 km).
+// A new centre is placed only via the drop-pin button: drag the pin onto the map, or click it to toggle pin mode.
 function VariantD() {
   const PALETTE = ['#0b8043', '#f9ab00', '#e8710a', '#d93025', '#8430ce', '#1a73e8'];
-  const bands = [1, 2, 3];               // km band edges, ascending; last = max radius
-  let circle = null, centredOn = null, guides = [];
+  const MAX_KM = 10;
+  const bands = [1, 2, 3, 5, 10];        // km band edges, ascending; last = max radius
+  let circle = null, centredOn = null, guides = [], pinMode = false;
   const maxKm = () => bands.at(-1);
   const bandIndexFor = km => Math.max(0, bands.findIndex(edge => km <= edge + 1e-9));
   const colourOf = i => PALETTE[i % PALETTE.length];
@@ -271,13 +275,13 @@ function VariantD() {
     });
   }
 
-  drawFeatures(f => centreOn(f));
+  drawFeatures(f => { if (pinMode) centreOn(f); });
   const box = floatBox(`
-    <div class="hint">Click the map to place the buffer, or centre it on a school. Drag the circle or its handles.</div>
+    <div class="hint">Drag the 📍 pin onto the map, or click it for pin mode (click it again to stop). Drag the circle to move it, or its handles to resize.</div>
+    <button id="dropPin" style="margin:6px 0;padding:6px 10px;cursor:grab;touch-action:none;user-select:none">📍 Drop centre</button>
     <input id="q" placeholder="Search schools by name or ID…" style="width:100%;padding:6px;margin:6px 0 4px">
     <select id="pick" style="width:100%;padding:4px;margin-bottom:4px"></select>
     <ul class="list" id="results" style="max-height:160px;overflow:auto;margin:0"></ul>
-    <label class="hint"><input id="biz" type="checkbox"> Show businesses (malls are filed under these)</label>
     <div id="centreName" style="margin:6px 0;font-weight:600"></div>
     <label>Radius <input id="r" type="range" min="100" step="50" style="width:150px"> <b id="rv"></b></label>
     <div style="margin:8px 0 4px;font-weight:600">Band edges</div>
@@ -316,6 +320,12 @@ function VariantD() {
     });
     circle.addListener('dragend', () => { centredOn = null; update(); });
     circle.addListener('center_changed', update);
+    circle.addListener('click', e => { if (pinMode) placeAt(e.latLng); }); // the circle swallows map clicks inside it
+  }
+  function placeAt(latLng) {
+    centredOn = null;
+    ensureCircle(latLng, Math.min(+$('#r').value || 1000, maxKm() * 1000));
+    update();
   }
   function centreOn(f) {
     centredOn = f;
@@ -331,7 +341,7 @@ function VariantD() {
     if (!circle) {
       $('#rv').textContent = '–'; $('#centreName').textContent = 'No buffer placed yet.'; $('#counts').innerHTML = '';
       colourFeatures(() => null);
-      showState({ variant: 'D', centre: null, bandEdgesKm: [...bands] });
+      showState({ variant: 'D', pinMode, centre: null, bandEdgesKm: [...bands] });
       return;
     }
     const c = ll(circle.getCenter()), km = circle.getRadius() / 1000, bi = bandIndexFor(km);
@@ -360,20 +370,79 @@ function VariantD() {
       const row = `<div class="band"><span class="swatch" style="background:${colourOf(i)}"></span>${prev}–${Math.min(edge, km).toFixed(2)} km: <b>${perBand[i].length}</b></div>`;
       prev = edge; return row;
     }).join('');
-    showState({ variant: 'D', centre: c, centredOn: centredOn && centredOn.id, radiusKm: +km.toFixed(3), maxKm: maxKm(),
+    showState({ variant: 'D', pinMode, centre: c, centredOn: centredOn && centredOn.id, radiusKm: +km.toFixed(3), maxKm: maxKm(),
       bandEdgesKm: [...bands], currentBand: bi + 1, insideCount: inside.length,
       perBand: bands.map((edge, i) => ({ toKm: edge, count: perBand[i].length, ids: perBand[i] })) });
   }
 
-  const click = map.addListener('click', e => { centredOn = null; ensureCircle(e.latLng, Math.min(+$('#r').value || 1000, maxKm() * 1000)); update(); });
+  // ----- drop-pin button: drag from it onto the map, or click it to toggle pin mode -----
+  const mapEl = document.getElementById('map');
+  const proj = new google.maps.OverlayView();       // only here to convert screen pixels to lat/lng
+  proj.onAdd = proj.draw = proj.onRemove = () => {};
+  proj.setMap(map);
+  const ghost = document.createElement('div');
+  ghost.textContent = '📍';
+  Object.assign(ghost.style, { position: 'fixed', fontSize: '30px', transform: 'translate(-50%, -100%)', pointerEvents: 'none', zIndex: 20, display: 'none' });
+  document.body.appendChild(ghost);
+  const btn = $('#dropPin');
+
+  function setPinMode(on) {
+    pinMode = on;
+    btn.textContent = on ? '📍 Pin mode ON (click to stop)' : '📍 Drop centre';
+    btn.style.background = on ? '#1a73e8' : '';
+    btn.style.color = on ? '#fff' : '';
+    map.setOptions({ draggableCursor: on ? 'crosshair' : null });
+    update();
+  }
+  let press = null;
+  btn.addEventListener('pointerdown', e => { press = { x: e.clientX, y: e.clientY, dragging: false }; btn.setPointerCapture(e.pointerId); e.preventDefault(); });
+  btn.addEventListener('pointermove', e => {
+    if (!press) return;
+    if (!press.dragging && Math.hypot(e.clientX - press.x, e.clientY - press.y) > 5) { press.dragging = true; ghost.style.display = 'block'; btn.style.cursor = 'grabbing'; }
+    if (press.dragging) Object.assign(ghost.style, { left: e.clientX + 'px', top: e.clientY + 'px' });
+  });
+  btn.addEventListener('pointerup', e => {
+    if (!press) return;
+    const wasDrag = press.dragging;
+    press = null; ghost.style.display = 'none'; btn.style.cursor = 'grab';
+    if (!wasDrag) return setPinMode(!pinMode);
+    if (!mapEl.contains(document.elementFromPoint(e.clientX, e.clientY))) return; // dropped on a menu or off the map: cancel
+    const r = mapEl.getBoundingClientRect();
+    placeAt(proj.getProjection().fromContainerPixelToLatLng(new google.maps.Point(e.clientX - r.left, e.clientY - r.top)));
+  });
+  btn.addEventListener('pointercancel', () => { press = null; ghost.style.display = 'none'; });
+  const click = map.addListener('click', e => { if (pinMode) placeAt(e.latLng); });
+
+  // ----- landmarks menu (minimisable) -----
+  const shown = new Set(['poi.school', 'poi.park', 'poi.attraction']);
+  const lm = floatBox(`
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:12px">
+      <b>Landmarks</b><button id="lmMin" title="Minimise">–</button>
+    </div>
+    <div id="lmBody" style="margin-top:6px">
+      ${POI_CATEGORIES.map(([ft, label]) => `<label style="display:block"><input type="checkbox" data-ft="${ft}" ${shown.has(ft) ? 'checked' : ''}> ${label}</label>`).join('')}
+    </div>`, { top: '60px', right: '10px' });
+  lm.querySelector('#lmMin').addEventListener('click', e => {
+    const body = lm.querySelector('#lmBody'), hide = body.style.display !== 'none';
+    body.style.display = hide ? 'none' : '';
+    e.target.textContent = hide ? '+' : '–';
+    e.target.title = hide ? 'Expand' : 'Minimise';
+  });
+  lm.addEventListener('change', e => {
+    const ft = e.target.dataset.ft;
+    if (!ft) return;
+    e.target.checked ? shown.add(ft) : shown.delete(ft);
+    map.setOptions({ styles: poiStyles(shown) });
+  });
+  map.setOptions({ styles: poiStyles(shown) });
+
   $('#q').addEventListener('input', renderResults);
   $('#pick').addEventListener('change', e => { if (e.target.value) centreOn(FEATURES.find(f => f.id === e.target.value)); });
-  $('#biz').addEventListener('change', e => map.setOptions({ styles: poiStyles(e.target.checked) }));
   $('#results').addEventListener('click', e => { const li = e.target.closest('li[data-id]'); if (li) centreOn(FEATURES.find(f => f.id === li.dataset.id)); });
   $('#r').addEventListener('input', e => { if (circle) circle.setRadius(+e.target.value); });
   $('#bandRows').addEventListener('change', e => {
     if (e.target.dataset.i === undefined) return;
-    bands[+e.target.dataset.i] = Math.max(0.1, +e.target.value);
+    bands[+e.target.dataset.i] = Math.min(MAX_KM, Math.max(0.1, +e.target.value));
     bands.sort((a, b) => a - b);
     renderBandRows();
     if (circle && circle.getRadius() > maxKm() * 1000) circle.setRadius(maxKm() * 1000); else update();
@@ -384,12 +453,19 @@ function VariantD() {
     renderBandRows();
     if (circle && circle.getRadius() > maxKm() * 1000) circle.setRadius(maxKm() * 1000); else update();
   });
-  $('#addBand').addEventListener('click', () => { bands.push(+(maxKm() + 1).toFixed(1)); renderBandRows(); update(); });
+  $('#addBand').addEventListener('click', () => {
+    if (maxKm() >= MAX_KM) return alert(`The outer band edge is already at the ${MAX_KM} km maximum. Lower an edge first.`);
+    bands.push(Math.min(MAX_KM, +(maxKm() + 1).toFixed(1))); renderBandRows(); update();
+  });
 
   $('#r').max = maxKm() * 1000; $('#r').value = 1000;
   renderBandRows();
   update();
-  return () => { click.remove(); circle && circle.setMap(null); guides.forEach(g => g.setMap(null)); map.setOptions({ styles: poiStyles(false) }); };
+  return () => {
+    click.remove(); circle && circle.setMap(null); guides.forEach(g => g.setMap(null));
+    proj.setMap(null); ghost.remove();
+    map.setOptions({ styles: poiStyles(DEFAULT_POIS), draggableCursor: null });
+  };
 }
 
 // ---------- switcher ----------
@@ -413,19 +489,31 @@ addEventListener('keydown', e => {
   if (e.key === 'ArrowRight') cycle(1);
 });
 
-// Hide Google's own landmarks except schools, parks and attractions (museums). Malls sit under poi.business,
-// which Google styles can't split from shops/restaurants, so businesses are a toggle.
-function poiStyles(showBusiness) {
+// Google's landmark categories (legacy JSON map styling). Each is all-or-nothing: malls can't be split from poi.business.
+const POI_CATEGORIES = [
+  ['poi.school', 'Schools & universities'],
+  ['poi.park', 'Parks'],
+  ['poi.attraction', 'Attractions (incl. museums)'],
+  ['poi.business', 'Businesses (incl. malls, shops, food)'],
+  ['poi.government', 'Government offices'],
+  ['poi.medical', 'Hospitals & clinics'],
+  ['poi.place_of_worship', 'Places of worship'],
+  ['poi.sports_complex', 'Sports complexes'],
+  ['transit.station.airport', 'Airports'],
+  ['transit.station.bus', 'Bus stations'],
+  ['transit.station.rail', 'Rail (MRT/LRT/PNR)'],
+];
+const DEFAULT_POIS = new Set(['poi.school', 'poi.park', 'poi.attraction']);
+function poiStyles(shown) {
   return [
     { featureType: 'poi', stylers: [{ visibility: 'off' }] },
     { featureType: 'transit.station', stylers: [{ visibility: 'off' }] },
-    ...['poi.school', 'poi.park', 'poi.attraction', ...(showBusiness ? ['poi.business'] : [])]
-      .map(featureType => ({ featureType, stylers: [{ visibility: 'on' }] })),
+    ...[...shown].map(featureType => ({ featureType, stylers: [{ visibility: 'on' }] })),
   ];
 }
 
 window.initMap = () => {
-  map = new google.maps.Map(document.getElementById('map'), { center: ORIGIN, zoom: 13, clickableIcons: false, streetViewControl: false, styles: poiStyles(false) });
+  map = new google.maps.Map(document.getElementById('map'), { center: ORIGIN, zoom: 13, clickableIcons: false, streetViewControl: false, styles: poiStyles(DEFAULT_POIS) });
   render(current);
 };
 
