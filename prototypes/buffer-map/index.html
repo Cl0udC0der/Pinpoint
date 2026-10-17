@@ -3,26 +3,25 @@
   PROTOTYPE: throwaway. Lives on branch prototype/buffer-map, never on main.
 
   Question: what should designating a Buffer Map's centre look and feel like?
-  Plan: structurally different variants on one page, switchable via ?variant=D|A|B|C
-  and the floating bottom bar (or the ← / → keys).
+  Answer so far: a flexible buffer with band edges plus school search (formerly variant D; variants A–C were dropped).
 
-    D  Hybrid (default)    A's flexible buffer + C's band edges + school search. Place via the drop-pin button
-                           (drag it onto the map, or click it to toggle pin mode) or centre on a
-                           school; the buffer takes the colour of the band its radius has reached; last edge = max radius (10 km cap).
-                           Floating, minimisable Landmarks menu toggles each Google landmark category.
-                           Hover a school for name + student count; click it (outside pin mode) for a Zillow-style
-                           overlay: photo collage, student-count headline, fact chips, lorem "What's special".
-                           School markers are Lucide size icons (house / house-plus / building / building-complex)
-                           in band-coloured badges, with a floating School size legend
-    A  Click to drop       full-bleed map; click anywhere to set the centre; drag the circle's handles to resize
-    B  Pin + results list  side panel listing Features inside, sorted by Distance; draggable centre pin
-    C  Feature as centre   pick a school as the centre; concentric distance bands with counts per band
+    Place via the drop-pin button at top right (drag it onto the map, or tap it to toggle pin mode; "?" explains)
+    or centre on a school from the centred sticky search header. The buffer takes the colour of the band its radius
+    has reached; last edge = max radius (10 km cap).
+    An always-visible pill under the search shows the count inside, per band; tap it for a scrollable list of
+    those schools, grouped by band, each linking to its overlay. Search results carry the same band dots.
+    Right-hand column, below the pin, of menus that minimise to Lucide icons: Band edges (radius, bands),
+    Landmarks (toggles each Google landmark category). On narrow screens one opens at a time per column.
+    Hover a school for name + student count; click it (outside pin mode) for a Zillow-style
+    overlay: photo collage, student-count headline, fact chips, lorem "What's special".
+    School markers are Lucide size icons (house / house-plus / building / building-complex)
+    in band-coloured badges. The School size legend sits bottom-right above State: open at first, greyed after any activity.
 
   Features are SYNTHETIC (random points around Quezon City). The real Dataset isn't geocoded yet.
   Distance is straight-line (haversine), per CONTEXT.md.
 
   Run:  python -m http.server 8000 -d prototypes/buffer-map
-  Open: http://localhost:8000/?key=YOUR_GOOGLE_MAPS_KEY&variant=A
+  Open: http://localhost:8000/?key=YOUR_GOOGLE_MAPS_KEY
 -->
 <html lang="en">
 <head>
@@ -32,33 +31,96 @@
 <style>
   * { box-sizing: border-box; }
   html, body { margin: 0; height: 100%; font: 14px/1.4 system-ui, sans-serif; color: #1d2329; background: #fff; }
-  #app { height: 100%; display: grid; grid-template-columns: 1fr; }
-  #app.with-panel { grid-template-columns: 340px 1fr; }
-  #panel { overflow: auto; border-right: 1px solid #ddd; padding: 12px; display: none; }
-  #app.with-panel #panel { display: block; }
+  #app { height: 100%; }
   #map { height: 100%; }
 
   .float { position: absolute; background: #fff; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,.2); padding: 10px 12px; }
   .hint { color: #666; font-size: 12px; }
-  .big { font-size: 28px; font-weight: 700; }
   ul.list { list-style: none; padding: 0; margin: 8px 0; }
   ul.list li { padding: 6px 4px; border-bottom: 1px solid #eee; cursor: pointer; display: flex; justify-content: space-between; gap: 8px; }
   ul.list li:hover { background: #f3f6fa; }
   ul.list li.sel { background: #e3edff; font-weight: 600; }
-  .presets button { margin-right: 4px; }
   .band { display: flex; align-items: center; gap: 8px; margin: 4px 0; }
   .swatch { width: 14px; height: 14px; border-radius: 3px; display: inline-block; }
 
-  #state { position: absolute; right: 10px; bottom: 70px; max-width: 320px; max-height: 40%; overflow: auto;
-           background: #111; color: #9fe; font: 11px/1.35 ui-monospace, monospace; padding: 8px; border-radius: 6px; opacity: .9; white-space: pre; }
-  #switcher { position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%); z-index: 10;
-              background: #111; color: #fff; border-radius: 999px; padding: 6px 8px; display: flex; align-items: center; gap: 8px;
-              box-shadow: 0 4px 14px rgba(0,0,0,.4); font-weight: 600; }
-  #switcher button { background: #333; color: #fff; border: 0; border-radius: 999px; width: 30px; height: 30px; cursor: pointer; font-size: 16px; }
+  /* Dock: a menu that minimises to a round Lucide icon button */
+  .dock:not(.open) > .dockPanel, .dock.open > .dockIcon { display: none; }
+  .dockIcon { width: 44px; height: 44px; border-radius: 50%; border: 0; background: #fff; color: #1d2329; box-shadow: 0 2px 8px rgba(0,0,0,.25);
+              display: grid; place-items: center; cursor: pointer; padding: 0; }
+  .dockPanel { background: #fff; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,.2); padding: 8px 12px 12px; width: min(300px, calc(100vw - 28px)); }
+  .dockHead { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+  .dockHead b { flex: 1; }
+  .dockMin { width: 32px; height: 32px; margin-right: -6px; border: 0; border-radius: 50%; background: none; color: inherit; cursor: pointer; display: grid; place-items: center; padding: 0; }
+  .dockMin:hover { background: rgba(127,127,127,.15); }
+  .dock input[type=number] { font-size: 16px; }
+  .dock label.check { display: flex; align-items: center; gap: 6px; padding: 3px 0; }
+
+  /* Bottom-right column: School size legend above State */
+  #cornerCol { position: fixed; right: 10px; bottom: 30px; z-index: 9; display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
+  /* Compact School size legend: 2×2 grid, sized to its content */
+  #legendDock .dockPanel { width: auto; padding: 4px 10px 8px; font-size: 12px; }
+  #legendDock .dockHead { margin-bottom: 2px; }
+  .legendGrid { display: grid; grid-template-columns: auto auto; gap: 4px 12px; }
+  .legendGrid > span { display: flex; align-items: center; gap: 4px; white-space: nowrap; }
+  .legendGrid .hint { font-size: 11px; }
+  /* Greyed out after the first activity; full colour again while hovered or focused */
+  .dock.faded > * { opacity: .45; filter: grayscale(1); transition: opacity .3s, filter .3s; }
+  .dock.faded:hover > *, .dock.faded:focus-within > * { opacity: 1; filter: none; }
+  #stateDock .dockPanel { background: #111; color: #9fe; opacity: .9; width: min(320px, calc(100vw - 20px)); max-height: 40vh; overflow: auto; }
+  #state { margin: 0; font: 11px/1.35 ui-monospace, monospace; white-space: pre; }
+
+  /* Layout: sticky search header, right-hand dock column, floating pin button */
+  /* Centred; the side margins keep it clear of the pin button and dock column on the right */
+  #searchBar { top: 10px; left: 50%; transform: translateX(-50%); width: min(520px, calc(100vw - 136px)); padding: 0; background: none; box-shadow: none; z-index: 6; }
+  .searchField { display: flex; align-items: center; gap: 8px; height: 46px; padding: 0 6px 0 12px; background: #fff; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,.25); color: #5f6368; }
+  .searchField input { flex: 1; min-width: 0; border: 0; outline: 0; background: none; font: inherit; font-size: 16px; color: #1d2329; }
+  #qClear { width: 34px; height: 34px; border: 0; border-radius: 50%; background: none; color: inherit; cursor: pointer; display: grid; place-items: center; padding: 0; }
+  #results { margin: 6px 0 0; padding: 4px 0; background: #fff; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,.25); max-height: min(50vh, 360px); overflow: auto; }
+  #results li { padding: 10px 14px; }
+  #dockCol { top: 66px; right: 6px; padding: 4px; background: none; box-shadow: none; z-index: 5; display: flex; flex-direction: column; align-items: flex-end; gap: 8px;
+             max-height: calc(100% - 150px); overflow-y: auto; }
+
+  /* Always-visible count of Features inside the buffer, under the search bar; tap to open Band edges */
+  #countsPill { top: 64px; left: 50%; transform: translateX(-50%); max-width: calc(100vw - 136px); z-index: 4; padding: 4px 12px; border-radius: 999px;
+                background: rgba(255,255,255,.92); box-shadow: 0 1px 4px rgba(0,0,0,.2); font-size: 13px; cursor: pointer;
+                display: flex; align-items: center; gap: 10px; white-space: nowrap; overflow: hidden; }
+  #countsPill .bandCount { display: inline-flex; align-items: center; gap: 4px; }
+  #countsPill .chev { display: inline-flex; color: #5f6368; transition: transform .15s; }
+  #countsPill[aria-expanded=true] .chev { transform: rotate(180deg); }
+  @media (max-width: 640px) { #countsPill .wide { display: none; } }
+  /* Band indicator: same colour as the buffer band (and map badge) the school falls in; grey = outside, black = centre */
+  .dot { display: inline-block; flex: none; width: 10px; height: 10px; border-radius: 50%; }
+  #results .name, #insideList .name { display: flex; align-items: center; gap: 8px; min-width: 0; }
+
+  /* Scrollable list of the schools inside the buffer, opened from the counts pill */
+  #insideList { top: 96px; left: 50%; transform: translateX(-50%); width: min(380px, calc(100vw - 32px)); max-height: min(55vh, 440px); overflow: auto; padding: 0 0 6px; z-index: 6; }
+  /* Title centred between an empty column and the close button, both 32px, so it sits at the true centre */
+  #insideList .insideHead { position: sticky; top: 0; z-index: 1; background: #fff; display: grid; grid-template-columns: 32px 1fr 32px; align-items: center;
+                            padding: 8px 8px; border-bottom: 1px solid #eee; }
+  #insideList .insideHead b { grid-column: 2; text-align: center; }
+  #insideList .bandHead { display: flex; align-items: center; justify-content: center; gap: 8px; padding: 10px 14px 2px; font-weight: 600; }
+  #insideList ul.list { margin: 0; }
+  #insideList li { padding: 8px 14px; cursor: default; }
+  #insideList a { color: #0041d9; text-decoration: none; font-weight: 600; }
+  #insideList a:hover { text-decoration: underline; }
+
+  #pinDock { top: 9px; right: 8px; padding: 0; background: none; box-shadow: none; z-index: 7; }
+  #pinFab { width: 48px; height: 48px; border-radius: 50%; border: 0; background: #fff; color: #1a73e8; box-shadow: 0 3px 10px rgba(0,0,0,.3);
+            display: grid; place-items: center; padding: 0; cursor: grab; touch-action: none; user-select: none; }
+  #pinDock.on #pinFab { background: #1a73e8; color: #fff; animation: pinPulse 1.6s infinite; }
+  @keyframes pinPulse { from { box-shadow: 0 0 0 0 rgba(26,115,232,.55), 0 3px 10px rgba(0,0,0,.3); } to { box-shadow: 0 0 0 16px rgba(26,115,232,0), 0 3px 10px rgba(0,0,0,.3); } }
+  #pinHelp { position: absolute; top: -6px; left: -6px; z-index: 1; width: 24px; height: 24px; border-radius: 50%; border: 0; background: #fff; color: #5f6368;
+             box-shadow: 0 1px 4px rgba(0,0,0,.3); display: grid; place-items: center; padding: 0; cursor: pointer; }
+  .pinChip { position: fixed; left: 50%; top: 100px; transform: translateX(-50%); white-space: nowrap; pointer-events: none; display: none;
+             background: #1d2329; color: #fff; border-radius: 999px; padding: 6px 12px; font-size: 13px; font-weight: 600; }
+  #pinDock.on .pinChip { display: block; }
+  #pinPop { position: absolute; right: 0; top: 58px; width: min(290px, calc(100vw - 32px)); background: #fff; border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,.3); padding: 10px 14px 12px; }
+  #pinPop ul { margin: 0; padding-left: 18px; }
+  #pinPop li { margin: 4px 0; }
   #schoolTip { position: fixed; z-index: 15; pointer-events: none; background: #fff; border-radius: 6px; padding: 6px 10px;
                box-shadow: 0 2px 10px rgba(0,0,0,.3); transform: translate(-50%, calc(-100% - 12px)); white-space: nowrap; display: none; }
 
-  /* Zillow-style school overlay (variant D) */
+  /* Zillow-style school overlay */
   #schoolOverlay { position: fixed; inset: 0; z-index: 30; background: rgba(0,0,0,.55); display: flex; justify-content: center; align-items: flex-start; padding: 24px 16px; }
   #schoolOverlay [hidden] { display: none !important; }
   #schoolOverlay .sheet { background: #fff; width: min(980px, 100%); max-height: 100%; overflow: auto; border-radius: 8px; box-shadow: 0 8px 40px rgba(0,0,0,.4); }
@@ -102,14 +164,7 @@
 </head>
 <body>
 <div id="app">
-  <div id="panel"></div>
   <div id="map"></div>
-</div>
-<div id="state"></div>
-<div id="switcher">
-  <button id="prev" title="Previous variant (←)">‹</button>
-  <span id="vlabel"></span>
-  <button id="next" title="Next variant (→)">›</button>
 </div>
 
 <script>
@@ -154,9 +209,45 @@ const ll = p => ({ lat: +p.lat().toFixed(5), lng: +p.lng().toFixed(5) });
 // ---------- shared plumbing ----------
 const params = new URLSearchParams(location.search);
 const KEY = params.get('key');
-const VARIANTS = ['D', 'A', 'B', 'C'];
-const NAMES = { A: 'Click to drop', B: 'Pin + results list', C: 'Feature as centre', D: 'Hybrid: flexible buffer + band edges' };
-let map, featureMarkers = [], cleanup = () => {};
+let map, featureMarkers = [];
+
+// Lucide icons (lucide-static 1.59.0), inner SVG only.
+const ICONS = {
+  landmark: '<path d="M10 18v-7"/><path d="M11.119 2.205a2 2 0 0 1 1.762 0l7.84 3.846A.5.5 0 0 1 20.5 7h-17a.5.5 0 0 1-.22-.949z"/><path d="M14 18v-7"/><path d="M18 18v-7"/><path d="M3 22h18"/><path d="M6 18v-7"/>',
+  school: '<path d="M14 21v-3a2 2 0 0 0-4 0v3"/><path d="M18 4.933V21"/><path d="m4 6 7.106-3.79a2 2 0 0 1 1.788 0L20 6"/><path d="m6 11-3.52 2.147a1 1 0 0 0-.48.854V19a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-5a1 1 0 0 0-.48-.853L18 11"/><path d="M6 4.933V21"/><circle cx="12" cy="9" r="2"/>',
+  braces: '<path d="M8 3H7a2 2 0 0 0-2 2v5a2 2 0 0 1-2 2 2 2 0 0 1 2 2v5c0 1.1.9 2 2 2h1"/><path d="M16 21h1a2 2 0 0 0 2-2v-5c0-1.1.9-2 2-2a2 2 0 0 1-2-2V5a2 2 0 0 0-2-2h-1"/>',
+  radius: '<path d="M20.34 17.52a10 10 0 1 0-2.82 2.82"/><circle cx="19" cy="19" r="2"/><path d="m13.41 13.41 4.18 4.18"/><circle cx="12" cy="12" r="2"/>',
+  mapPinPlus: '<path d="M19.914 11.105A7.298 7.298 0 0 0 20 10a8 8 0 0 0-16 0c0 4.993 5.539 10.193 7.399 11.799a1 1 0 0 0 1.202 0 32 32 0 0 0 .824-.738"/><circle cx="12" cy="10" r="3"/><path d="M16 18h6"/><path d="M19 15v6"/>',
+  search: '<path d="m21 21-4.34-4.34"/><circle cx="11" cy="11" r="8"/>',
+  x: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
+  help: '<circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/>',
+  minus: '<path d="M5 12h14"/>',
+  chevronDown: '<path d="m6 9 6 6 6-6"/>',
+};
+const svg = (inner, px = 18) => `<svg xmlns="http://www.w3.org/2000/svg" width="${px}" height="${px}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;flex:none">${inner}</svg>`;
+
+// A menu that minimises to its icon. On narrow screens only one dock per column is open at a time.
+const narrow = matchMedia('(max-width: 640px)');
+function makeDock({ icon, title, body, open }) {
+  const el = document.createElement('div');
+  el.className = 'dock' + (open ? ' open' : '');
+  el.innerHTML = `<button class="dockIcon" data-toggle title="${title}" aria-label="Show ${title}">${svg(ICONS[icon], 22)}</button>
+    <div class="dockPanel"><div class="dockHead">${svg(ICONS[icon])}<b>${title}</b>
+      <button class="dockMin" data-toggle title="Minimise" aria-label="Minimise ${title}">${svg(ICONS.minus)}</button></div>
+      <div class="dockBody">${body}</div></div>`;
+  el.addEventListener('click', e => { if (e.target.closest('[data-toggle]')) setDockOpen(el, !el.classList.contains('open')); });
+  return el;
+}
+function setDockOpen(el, open) {
+  if (open && narrow.matches) el.parentElement.querySelectorAll(':scope > .dock.open').forEach(d => d !== el && d.classList.remove('open'));
+  el.classList.toggle('open', open);
+}
+const stateDock = makeDock({ icon: 'braces', title: 'State', body: '<pre id="state"></pre>', open: !narrow.matches });
+stateDock.id = 'stateDock';
+const cornerCol = document.createElement('div');
+cornerCol.id = 'cornerCol';
+cornerCol.appendChild(stateDock);
+document.body.appendChild(cornerCol);
 
 function showState(obj) { document.getElementById('state').textContent = JSON.stringify(obj, null, 2); }
 
@@ -169,17 +260,6 @@ function drawFeatures(onClick) {
     return m;
   });
 }
-function colourFeatures(colourFor) {
-  FEATURES.forEach((f, i) => featureMarkers[i].setIcon(dot(colourFor(f) || '#bbb', colourFor(f) ? 7 : 5)));
-}
-function clearAll() {
-  cleanup();
-  featureMarkers.forEach(m => m.setMap(null));
-  featureMarkers = [];
-  document.getElementById('panel').innerHTML = '';
-  document.querySelectorAll('.float').forEach(el => el.remove());
-  document.getElementById('app').className = '';
-}
 function floatBox(html, style) {
   const el = document.createElement('div');
   el.className = 'float';
@@ -189,142 +269,25 @@ function floatBox(html, style) {
   return el;
 }
 
-// ---------- Variant A: click to drop ----------
-function VariantA() {
-  let circle = null;
-  drawFeatures();
-  const box = floatBox(`
-    <div class="hint">Click the map to set the centre. Drag the circle or its handles.</div>
-    <label>Radius <input id="r" type="range" min="250" max="10000" step="250" value="2000"> <b id="rv">2.0 km</b></label>
-    <div><span class="big" id="count">–</span> Features inside</div>`, { top: '10px', left: '10px' });
-  const r = box.querySelector('#r');
-
-  function update() {
-    if (!circle) { colourFeatures(() => null); showState({ variant: 'A', centre: null, radiusM: +r.value }); return; }
-    const c = ll(circle.getCenter()), km = circle.getRadius() / 1000;
-    const inside = FEATURES.filter(f => distanceKm(c, f) <= km);
-    const ids = new Set(inside.map(f => f.id));
-    colourFeatures(f => ids.has(f.id) ? '#d93025' : null);
-    box.querySelector('#count').textContent = inside.length;
-    box.querySelector('#rv').textContent = km.toFixed(1) + ' km';
-    r.value = Math.round(circle.getRadius());
-    showState({ variant: 'A', centre: c, radiusM: Math.round(circle.getRadius()), insideCount: inside.length, insideIds: inside.map(f => f.id) });
-  }
-  const click = map.addListener('click', e => {
-    if (circle) circle.setCenter(e.latLng);
-    else {
-      circle = new google.maps.Circle({ map, center: e.latLng, radius: +r.value, editable: true, draggable: true,
-        fillColor: '#d93025', fillOpacity: .12, strokeColor: '#d93025', strokeWeight: 2 });
-      circle.addListener('center_changed', update);
-      circle.addListener('radius_changed', update);
-    }
-    update();
-  });
-  r.addEventListener('input', () => { box.querySelector('#rv').textContent = (r.value / 1000).toFixed(1) + ' km'; if (circle) circle.setRadius(+r.value); else update(); });
-  update();
-  return () => { click.remove(); circle && circle.setMap(null); };
-}
-
-// ---------- Variant B: draggable pin + ranked results list ----------
-function VariantB() {
-  document.getElementById('app').className = 'with-panel';
-  let radiusKm = 2, selected = null;
-  const panel = document.getElementById('panel');
-  panel.innerHTML = `
-    <h3 style="margin:0 0 6px">Buffer Map</h3>
-    <div class="hint">Drag the blue pin, or right-click the map to move it there.</div>
-    <p><label>Centre <input id="lat" size="8"> <input id="lng" size="9"> <button id="go">Set</button></label></p>
-    <p class="presets">Radius: ${[0.5, 1, 2, 3, 5].map(k => `<button data-k="${k}">${k} km</button>`).join('')}
-       <input id="rk" type="number" step="0.1" min="0.1" style="width:60px"> km</p>
-    <div><span class="big" id="count"></span> Features within <b id="rlabel"></b></div>
-    <ul class="list" id="list"></ul>`;
-  drawFeatures(f => { selected = f.id; update(); });
-  const pin = new google.maps.Marker({ map, position: ORIGIN, draggable: true, zIndex: 999, title: 'Centre' });
-  const circle = new google.maps.Circle({ map, center: ORIGIN, radius: radiusKm * 1000, clickable: false,
-    fillColor: '#1a73e8', fillOpacity: .1, strokeColor: '#1a73e8', strokeWeight: 2 });
-
-  function update() {
-    const c = ll(pin.getPosition());
-    circle.setCenter(c); circle.setRadius(radiusKm * 1000);
-    const ranked = FEATURES.map(f => ({ ...f, d: distanceKm(c, f) })).filter(f => f.d <= radiusKm).sort((a, b) => a.d - b.d);
-    const ids = new Set(ranked.map(f => f.id));
-    colourFeatures(f => f.id === selected ? '#f9ab00' : ids.has(f.id) ? '#1a73e8' : null);
-    panel.querySelector('#lat').value = c.lat; panel.querySelector('#lng').value = c.lng;
-    panel.querySelector('#rk').value = radiusKm;
-    panel.querySelector('#count').textContent = ranked.length;
-    panel.querySelector('#rlabel').textContent = radiusKm + ' km';
-    panel.querySelector('#list').innerHTML = ranked.map(f =>
-      `<li data-id="${f.id}" class="${f.id === selected ? 'sel' : ''}"><span>${f.name}</span><span>${f.d.toFixed(2)} km</span></li>`).join('')
-      || '<li class="hint">No Features inside.</li>';
-    showState({ variant: 'B', centre: c, radiusKm, insideCount: ranked.length, selected,
-      nearest: ranked.slice(0, 5).map(f => `${f.id} @ ${f.d.toFixed(2)} km`) });
-  }
-  panel.addEventListener('click', e => {
-    if (e.target.dataset.k) { radiusKm = +e.target.dataset.k; update(); }
-    const li = e.target.closest('li[data-id]');
-    if (li) { selected = li.dataset.id; map.panTo(FEATURES.find(f => f.id === selected)); update(); }
-    if (e.target.id === 'go') { pin.setPosition({ lat: +panel.querySelector('#lat').value, lng: +panel.querySelector('#lng').value }); map.panTo(pin.getPosition()); update(); }
-  });
-  panel.querySelector('#rk').addEventListener('change', e => { radiusKm = +e.target.value; update(); });
-  pin.addListener('drag', update);
-  const rc = map.addListener('rightclick', e => { pin.setPosition(e.latLng); update(); });
-  update();
-  return () => { pin.setMap(null); circle.setMap(null); rc.remove(); };
-}
-
-// ---------- Variant C: a Feature is the centre; concentric bands ----------
-function VariantC() {
-  const BANDS = [{ km: 1, c: '#0b8043' }, { km: 2, c: '#f9ab00' }, { km: 3, c: '#e8710a' }];
-  let centre = null, rings = [];
-  drawFeatures(f => { centre = f; update(); });
-  const box = floatBox(`
-    <div class="hint">Click a school to make it the centre.</div>
-    <select id="pick"><option value="">— or choose a school —</option>${FEATURES.map(f => `<option value="${f.id}">${f.name}</option>`).join('')}</select>
-    <div id="centreName" style="margin:6px 0;font-weight:600"></div>
-    <div id="bands"></div>
-    <label class="hint">Band edges (km): <input id="edges" value="1,2,3" size="8"></label>`, { top: '10px', left: '10px', width: '260px' });
-
-  function update() {
-    rings.forEach(r => r.setMap(null)); rings = [];
-    if (!centre) { colourFeatures(() => null); showState({ variant: 'C', centre: null }); return; }
-    box.querySelector('#pick').value = centre.id;
-    box.querySelector('#centreName').textContent = 'Centre: ' + centre.name;
-    const counts = BANDS.map(() => []);
-    const bandOf = f => BANDS.findIndex(b => distanceKm(centre, f) <= b.km);
-    FEATURES.forEach(f => { if (f.id !== centre.id) { const i = bandOf(f); if (i >= 0) counts[i].push(f.id); } });
-    [...BANDS].reverse().forEach(b => rings.push(new google.maps.Circle({ map, center: centre, radius: b.km * 1000, clickable: false,
-      fillColor: b.c, fillOpacity: .08, strokeColor: b.c, strokeWeight: 2 })));
-    colourFeatures(f => f.id === centre.id ? '#000' : (i => i >= 0 ? BANDS[i].c : null)(bandOf(f)));
-    let prev = 0;
-    box.querySelector('#bands').innerHTML = BANDS.map((b, i) => {
-      const row = `<div class="band"><span class="swatch" style="background:${b.c}"></span>${prev}–${b.km} km: <b>${counts[i].length}</b></div>`;
-      prev = b.km; return row;
-    }).join('') + `<div class="hint">Total within ${BANDS.at(-1).km} km: ${counts.flat().length}</div>`;
-    showState({ variant: 'C', centre: { id: centre.id, lat: +centre.lat.toFixed(5), lng: +centre.lng.toFixed(5) },
-      bands: BANDS.map((b, i) => ({ toKm: b.km, count: counts[i].length, ids: counts[i] })) });
-  }
-  box.querySelector('#pick').addEventListener('change', e => { centre = FEATURES.find(f => f.id === e.target.value) || null; if (centre) map.panTo(centre); update(); });
-  box.querySelector('#edges').addEventListener('change', e => {
-    const kms = e.target.value.split(',').map(Number).filter(n => n > 0).sort((a, b) => a - b);
-    const palette = ['#0b8043', '#f9ab00', '#e8710a', '#d93025', '#8430ce'];
-    BANDS.splice(0, BANDS.length, ...kms.map((km, i) => ({ km, c: palette[i % palette.length] })));
-    update();
-  });
-  update();
-  return () => rings.forEach(r => r.setMap(null));
-}
-
-// ---------- Variant D: A's flexible buffer + C's band edges + school search ----------
+// ---------- Buffer Map: flexible buffer + band edges + school search ----------
 // The buffer takes the colour of the band its radius has reached. The last band edge is the max radius (capped at 10 km).
 // A new centre is placed only via the drop-pin button: drag the pin onto the map, or click it to toggle pin mode.
-function VariantD() {
+function BufferMap() {
   const PALETTE = ['#0b8043', '#f9ab00', '#e8710a', '#d93025', '#8430ce', '#1a73e8'];
   const MAX_KM = 10;
-  const bands = [1, 2, 3, 5, 10];        // km band edges, ascending; last = max radius
+  const bands = [1, 2, 3];               // km band edges, ascending; last = max radius
   let circle = null, centredOn = null, guides = [], pinMode = false;
   const maxKm = () => bands.at(-1);
   const bandIndexFor = km => Math.max(0, bands.findIndex(edge => km <= edge + 1e-9));
   const colourOf = i => PALETTE[i % PALETTE.length];
+  // Where a school sits relative to the buffer: distance from its centre and band index (-1 = outside); null with no buffer.
+  function placement(f) {
+    if (!circle) return null;
+    const d = distanceKm(ll(circle.getCenter()), f);
+    return { d, band: d <= circle.getRadius() / 1000 ? bandIndexFor(d) : -1 };
+  }
+  const dotColour = (f, p) => centredOn && f.id === centredOn.id ? '#000' : p.band >= 0 ? colourOf(p.band) : '#80868b';
+  const dotHtml = colour => `<i class="dot" style="background:${colour}"></i>`;
   // Points around a geodesic circle of radiusKm (great-circle destination formula), for drawing band rings.
   function ringPath(c, radiusKm, n = 96) {
     const R = 6371, d = radiusKm / R, toRad = x => x * Math.PI / 180, toDeg = x => x * 180 / Math.PI;
@@ -337,7 +300,7 @@ function VariantD() {
     });
   }
 
-  drawFeatures(f => pinMode ? centreOn(f) : openOverlay(f));
+  drawFeatures(f => pinMode ? centreOn(f, true) : openOverlay(f));
 
   // ----- school-size markers: Lucide icon (lucide-static 1.59.0) in a badge filled with the band colour -----
   const SIZES = [
@@ -347,7 +310,7 @@ function VariantD() {
     { max: Infinity, label: 'Mega', range: '1,500+', icon: '<path d="M10 12h4"/><path d="M10 8h4"/><path d="M14 21v-3a2 2 0 0 0-4 0v3"/><path d="M6 10H4a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-2"/><path d="M6 21V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v16"/>' },
   ];
   const sizeOf = f => SIZES.find(s => f.students < s.max);
-  const lucide = (size, px = 18) => `<svg xmlns="http://www.w3.org/2000/svg" width="${px}" height="${px}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle">${size.icon}</svg>`;
+  const lucide = (size, px = 18) => svg(size.icon, px);
   const badgeUrl = (size, fill) => 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(
     `<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 28 28"><circle cx="14" cy="14" r="12.5" fill="${fill}" stroke="#fff" stroke-width="1.5"/>` +
     `<g transform="translate(6 6) scale(.6667)" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">${size.icon}</g></svg>`);
@@ -425,37 +388,94 @@ function VariantD() {
         e.target.textContent = clamped ? 'Show more' : 'Show less';
       }
     });
-    showState({ variant: 'D', overlay: { id: f.id, name: f.name, students: f.students, grades: f.grades, type: f.type,
+    showState({ overlay: { id: f.id, name: f.name, students: f.students, grades: f.grades, type: f.type,
       founded: f.founded, ratio: `1:${f.ratio}`, photos: f.photos, distanceKm: c ? +d.toFixed(3) : null, band } });
   }
-  const onKey = e => { if (e.key === 'Escape') closeOverlay(); };
+  const onKey = e => {
+    if (e.key !== 'Escape') return;
+    if (document.getElementById('schoolOverlay')) closeOverlay(); else if (!insideList.hidden) toggleInsideList(false);
+  };
   addEventListener('keydown', onKey);
 
-  const box = floatBox(`
-    <div class="hint">Drag the 📍 pin onto the map, or click it for pin mode (click it again to stop). Drag the circle to move it, or its handles to resize.</div>
-    <button id="dropPin" style="margin:6px 0;padding:6px 10px;cursor:grab;touch-action:none;user-select:none">📍 Drop centre</button>
-    <input id="q" placeholder="Search schools by name or ID…" style="width:100%;padding:6px;margin:6px 0 4px">
-    <select id="pick" style="width:100%;padding:4px;margin-bottom:4px"></select>
-    <ul class="list" id="results" style="max-height:160px;overflow:auto;margin:0"></ul>
-    <div id="centreName" style="margin:6px 0;font-weight:600"></div>
-    <label>Radius <input id="r" type="range" min="100" step="50" style="width:150px"> <b id="rv"></b></label>
-    <div style="margin:8px 0 4px;font-weight:600">Band edges</div>
+  // ----- sticky header: one search field; focusing it opens the school list beneath, typing filters it -----
+  const searchBar = floatBox(`
+    <div class="searchField">${svg(ICONS.search)}
+      <input id="q" placeholder="Search schools by name or ID" autocomplete="off" enterkeyhint="search"
+        role="combobox" aria-expanded="false" aria-controls="results" aria-label="Search schools">
+      <button id="qClear" title="Clear" aria-label="Clear search" hidden>${svg(ICONS.x)}</button>
+    </div>
+    <ul class="list" id="results" role="listbox" hidden></ul>`, {});
+  searchBar.id = 'searchBar';
+
+  // ----- right-hand column: Band edges and Landmarks docks -----
+  const bandDock = makeDock({ icon: 'radius', title: 'Band edges', open: !narrow.matches, body: `
+    <div id="centreName" style="font-weight:600"></div>
+    <label style="display:flex;align-items:center;gap:8px;margin:6px 0">Radius <input id="r" type="range" min="100" step="50" style="flex:1;min-width:0"> <b id="rv"></b></label>
+    <div style="margin:10px 0 4px;font-weight:600">Band edges</div>
     <div id="bandRows"></div>
     <button id="addBand">+ add band</button>
-    <div id="counts" style="margin-top:8px"></div>`, { top: '10px', left: '10px', width: '300px', maxHeight: 'calc(100% - 100px)', overflow: 'auto' });
-  const $ = s => box.querySelector(s);
+    <div class="hint" style="margin-top:8px">Drag the circle to move it, or its handles to resize.</div>` });
+  // ----- counts pill + the list of schools inside it opens (each a link to the school's overlay) -----
+  const pill = floatBox('', {});
+  pill.id = 'countsPill';
+  pill.setAttribute('role', 'button');
+  pill.setAttribute('aria-expanded', 'false');
+  pill.title = 'Show the schools inside';
+  const insideList = floatBox('', {});
+  insideList.id = 'insideList';
+  insideList.setAttribute('role', 'dialog');
+  insideList.setAttribute('aria-label', 'Schools inside the buffer');
+  insideList.hidden = true;
+  function toggleInsideList(open) {
+    insideList.hidden = !open;
+    pill.setAttribute('aria-expanded', open);
+    update();
+  }
+  pill.addEventListener('click', () => { if (circle) toggleInsideList(insideList.hidden); });
+  insideList.addEventListener('click', e => {
+    if (e.target.closest('[data-close-list]')) return toggleInsideList(false);
+    const a = e.target.closest('a[data-open]');
+    if (a) { e.preventDefault(); openOverlay(FEATURES.find(f => f.id === a.dataset.open)); }
+  });
+  // Modal: a press anywhere else closes it (the school overlay it opens doesn't count).
+  const onDown = e => { if (!insideList.hidden && !e.target.closest('#insideList, #countsPill, #schoolOverlay')) toggleInsideList(false); };
+  addEventListener('pointerdown', onDown, true);
+  function renderInsideList(c, km, bi, inside) {
+    const rows = inside.map(f => ({ f, d: distanceKm(c, f) })).sort((a, b) => a.d - b.d);
+    let prev = 0;
+    insideList.innerHTML = `<div class="insideHead"><b>${inside.length} school${inside.length === 1 ? '' : 's'} inside</b>
+        <button class="dockMin" data-close-list title="Close" aria-label="Close list">${svg(ICONS.x)}</button></div>` +
+      bands.slice(0, bi + 1).map((edge, i) => {
+        const inBand = rows.filter(r => bandIndexFor(r.d) === i);
+        const html = `<div class="bandHead">${dotHtml(colourOf(i))}${prev}–${Math.min(edge, km).toFixed(2)} km <span class="hint">· ${inBand.length}</span></div>` +
+          (inBand.length ? `<ul class="list">${inBand.map(({ f, d }) =>
+            `<li><span class="name">${dotHtml(colourOf(i))}<a href="#" data-open="${f.id}">${f.name}</a></span><span class="hint">${d.toFixed(2)} km</span></li>`).join('')}</ul>`
+            : '<div class="hint" style="padding:2px 14px 6px">None</div>');
+        prev = edge; return html;
+      }).join('');
+  }
+  const $ = s => document.querySelector(s);
+  const q = $('#q'), results = $('#results'), qClear = $('#qClear');
+  let typed = false; // false right after focus, so the full list shows until the Analyst types
 
   function renderResults() {
-    const q = $('#q').value.trim().toLowerCase();
-    const matching = FEATURES.filter(f => !q || f.name.toLowerCase().includes(q) || f.id.toLowerCase().includes(q));
-    const opts = `<option value="">— choose a school (${matching.length}) —</option>` +
-      [...matching].sort((a, b) => a.name.localeCompare(b.name)).map(f => `<option value="${f.id}">${f.name} (${f.id})</option>`).join('');
-    if ($('#pick').dataset.opts !== opts) { $('#pick').innerHTML = opts; $('#pick').dataset.opts = opts; }
-    $('#pick').value = centredOn && matching.includes(centredOn) ? centredOn.id : '';
-    const hits = q ? matching : [];
-    $('#results').innerHTML = hits.slice(0, 30).map(f =>
-      `<li data-id="${f.id}" class="${centredOn && f.id === centredOn.id ? 'sel' : ''}"><span>${f.name}</span><span class="hint">${f.id}</span></li>`).join('')
-      || (q ? '<li class="hint">No match.</li>' : '');
+    const term = typed ? q.value.trim().toLowerCase() : '';
+    const matching = FEATURES.filter(f => !term || f.name.toLowerCase().includes(term) || f.id.toLowerCase().includes(term))
+      .sort((a, b) => a.name.localeCompare(b.name));
+    results.innerHTML = matching.map(f =>
+      (p => `<li data-id="${f.id}" role="option" class="${centredOn && f.id === centredOn.id ? 'sel' : ''}"><span class="name">${p ? dotHtml(dotColour(f, p)) : ''}${f.name}</span>` +
+        `<span class="hint">${f.id}${p ? ` · ${p.d.toFixed(1)} km` : ''}</span></li>`)(placement(f))).join('')
+      || '<li class="hint">No match.</li>';
+  }
+  function openResults(open) {
+    results.hidden = !open;
+    q.setAttribute('aria-expanded', open);
+    if (open) renderResults();
+  }
+  // Outside the field, it shows the school the buffer is centred on.
+  function syncQuery() {
+    if (document.activeElement !== q) q.value = centredOn ? centredOn.name : '';
+    qClear.hidden = !q.value;
   }
   function renderBandRows() {
     let prev = 0;
@@ -477,14 +497,17 @@ function VariantD() {
     circle.addListener('center_changed', update);
     circle.addListener('click', e => { if (pinMode) placeAt(e.latLng); }); // the circle swallows map clicks inside it
   }
+  // Dropping the pin (on the map, or on a school in pin mode) always opens the buffer to the max radius: the outer band edge.
   function placeAt(latLng) {
     centredOn = null;
-    ensureCircle(latLng, Math.min(+$('#r').value || 1000, maxKm() * 1000));
+    ensureCircle(latLng, maxKm() * 1000);
+    circle.setRadius(maxKm() * 1000);
     update();
   }
-  function centreOn(f) {
+  function centreOn(f, fromPin = false) {
     centredOn = f;
-    ensureCircle(f, Math.min(+$('#r').value || 1000, maxKm() * 1000));
+    ensureCircle(f, fromPin ? maxKm() * 1000 : Math.min(+$('#r').value || 1000, maxKm() * 1000));
+    if (fromPin) circle.setRadius(maxKm() * 1000);
     map.panTo(f);
     update();
   }
@@ -492,11 +515,14 @@ function VariantD() {
   function update() {
     guides.forEach(g => g.setMap(null)); guides = [];
     $('#r').max = maxKm() * 1000;
-    renderResults();
+    syncQuery();
+    if (!results.hidden) renderResults();
     if (!circle) {
-      $('#rv').textContent = '–'; $('#centreName').textContent = 'No buffer placed yet.'; $('#counts').innerHTML = '';
+      $('#rv').textContent = '–'; $('#centreName').textContent = 'No buffer placed yet.';
+      pill.innerHTML = '<span class="hint">No buffer yet</span>';
+      insideList.hidden = true; pill.setAttribute('aria-expanded', 'false');
       colourSchools(() => null);
-      showState({ variant: 'D', pinMode, centre: null, bandEdgesKm: [...bands] });
+      showState({ pinMode, centre: null, bandEdgesKm: [...bands] });
       return;
     }
     const c = ll(circle.getCenter()), km = circle.getRadius() / 1000, bi = bandIndexFor(km);
@@ -525,16 +551,35 @@ function VariantD() {
     $('#rv').textContent = `${km.toFixed(2)} km`;
     $('#centreName').innerHTML = centredOn ? `Centred on: ${centredOn.name} <span class="hint">${centredOn.id}</span>` : 'Centred on: placed point';
     let prev = 0;
-    $('#counts').innerHTML = `<div><span class="big">${inside.length}</span> Features inside</div>` + bands.slice(0, bi + 1).map((edge, i) => {
-      const row = `<div class="band"><span class="swatch" style="background:${colourOf(i)}"></span>${prev}–${Math.min(edge, km).toFixed(2)} km: <b>${perBand[i].length}</b></div>`;
-      prev = edge; return row;
-    }).join('');
-    showState({ variant: 'D', pinMode, centre: c, centredOn: centredOn && centredOn.id, radiusKm: +km.toFixed(3), maxKm: maxKm(),
+    pill.innerHTML = `<span><b>${inside.length}</b><span class="wide"> Features</span> inside</span>` + bands.slice(0, bi + 1).map((edge, i) => {
+      const chip = `<span class="bandCount" title="${prev}–${Math.min(edge, km).toFixed(2)} km: ${perBand[i].length}">${dotHtml(colourOf(i))}${perBand[i].length}</span>`;
+      prev = edge; return chip;
+    }).join('') + `<span class="chev">${svg(ICONS.chevronDown, 14)}</span>`;
+    if (!insideList.hidden) renderInsideList(c, km, bi, inside);
+    showState({ pinMode, centre: c, centredOn: centredOn && centredOn.id, radiusKm: +km.toFixed(3), maxKm: maxKm(),
       bandEdgesKm: [...bands], currentBand: bi + 1, insideCount: inside.length,
       perBand: bands.map((edge, i) => ({ toKm: edge, count: perBand[i].length, ids: perBand[i] })) });
   }
 
-  // ----- drop-pin button: drag from it onto the map, or click it to toggle pin mode -----
+  // ----- floating drop-pin button: drag from it onto the map, or tap it to toggle pin mode; "?" opens help -----
+  const verb = matchMedia('(pointer: coarse)').matches ? 'Tap' : 'Click';
+  const pinDock = floatBox(`
+    <div id="pinPop" role="dialog" aria-label="How to drop a buffer centre" hidden>
+      <div class="dockHead"><b>Drop a buffer centre</b><button class="dockMin" data-close-help title="Close" aria-label="Close help">${svg(ICONS.x)}</button></div>
+      <ul>
+        <li>${verb} the pin to turn pin mode on, then ${verb.toLowerCase()} the map (or a school) to put the centre there. ${verb} the pin again to stop.</li>
+        <li>Or drag the pin straight onto the map.</li>
+        <li>Then drag the circle to move it, or its handles to resize. Set the bands in ${svg(ICONS.radius, 14)} <b>Band edges</b>.</li>
+      </ul>
+    </div>
+    <span class="pinChip">${verb} the map to set the centre</span>
+    <button id="pinHelp" title="How does this work?" aria-label="How to drop a buffer centre">${svg(ICONS.help, 16)}</button>
+    <button id="pinFab" title="Drop buffer centre (${verb.toLowerCase()}, or drag onto the map)" aria-label="Drop buffer centre" aria-pressed="false">${svg(ICONS.mapPinPlus, 26)}</button>`, {});
+  pinDock.id = 'pinDock';
+  const pinPop = pinDock.querySelector('#pinPop');
+  pinDock.querySelector('#pinHelp').addEventListener('click', () => { pinPop.hidden = !pinPop.hidden; });
+  pinDock.querySelector('[data-close-help]').addEventListener('click', () => { pinPop.hidden = true; });
+
   const mapEl = document.getElementById('map');
   const proj = new google.maps.OverlayView();       // only here to convert screen pixels to lat/lng
   proj.onAdd = proj.draw = proj.onRemove = () => {};
@@ -543,13 +588,13 @@ function VariantD() {
   ghost.textContent = '📍';
   Object.assign(ghost.style, { position: 'fixed', fontSize: '30px', transform: 'translate(-50%, -100%)', pointerEvents: 'none', zIndex: 20, display: 'none' });
   document.body.appendChild(ghost);
-  const btn = $('#dropPin');
+  const btn = pinDock.querySelector('#pinFab');
 
   function setPinMode(on) {
     pinMode = on;
-    btn.textContent = on ? '📍 Pin mode ON (click to stop)' : '📍 Drop centre';
-    btn.style.background = on ? '#1a73e8' : '';
-    btn.style.color = on ? '#fff' : '';
+    pinDock.classList.toggle('on', on);
+    btn.setAttribute('aria-pressed', on);
+    if (on) pinPop.hidden = true;
     map.setOptions({ draggableCursor: on ? 'crosshair' : null });
     update();
   }
@@ -557,7 +602,7 @@ function VariantD() {
   btn.addEventListener('pointerdown', e => { press = { x: e.clientX, y: e.clientY, dragging: false }; btn.setPointerCapture(e.pointerId); e.preventDefault(); });
   btn.addEventListener('pointermove', e => {
     if (!press) return;
-    if (!press.dragging && Math.hypot(e.clientX - press.x, e.clientY - press.y) > 5) { press.dragging = true; ghost.style.display = 'block'; btn.style.cursor = 'grabbing'; }
+    if (!press.dragging && Math.hypot(e.clientX - press.x, e.clientY - press.y) > 5) { press.dragging = true; ghost.style.display = 'block'; btn.style.cursor = 'grabbing'; pinPop.hidden = true; }
     if (press.dragging) Object.assign(ghost.style, { left: e.clientX + 'px', top: e.clientY + 'px' });
   });
   btn.addEventListener('pointerup', e => {
@@ -570,40 +615,25 @@ function VariantD() {
     placeAt(proj.getProjection().fromContainerPixelToLatLng(new google.maps.Point(e.clientX - r.left, e.clientY - r.top)));
   });
   btn.addEventListener('pointercancel', () => { press = null; ghost.style.display = 'none'; });
-  const click = map.addListener('click', e => { if (pinMode) placeAt(e.latLng); });
+  map.addListener('click', e => { if (pinMode) placeAt(e.latLng); });
 
   // ----- landmarks menu (minimisable) -----
   const shown = new Set(['poi.school', 'poi.park', 'poi.attraction']);
-  const lm = floatBox(`
-    <div style="display:flex;justify-content:space-between;align-items:center;gap:12px">
-      <b>Landmarks</b><button id="lmMin" title="Minimise">–</button>
-    </div>
-    <div id="lmBody" style="margin-top:6px">
-      ${POI_CATEGORIES.map(([ft, label]) => `<label style="display:block"><input type="checkbox" data-ft="${ft}" ${shown.has(ft) ? 'checked' : ''}> ${label}</label>`).join('')}
-    </div>`, { position: 'static' });
-  const legend = floatBox(`
-    <div style="display:flex;justify-content:space-between;align-items:center;gap:12px">
-      <b>School size</b><button id="lgMin" title="Minimise">–</button>
-    </div>
-    <div id="lgBody" style="margin-top:6px">
-      ${SIZES.map(s => `<div class="band"><img src="${badgeUrl(s, '#3c4043')}" width="22" height="22" alt=""> ${s.label} <span class="hint">${s.range} students</span></div>`).join('')}
-      <div class="hint" style="margin-top:4px">Badge colour = buffer band; grey = outside.</div>
-    </div>`, { position: 'static' });
-  legend.querySelector('#lgMin').addEventListener('click', e => {
-    const body = legend.querySelector('#lgBody'), hide = body.style.display !== 'none';
-    body.style.display = hide ? 'none' : '';
-    e.target.textContent = hide ? '+' : '–';
-    e.target.title = hide ? 'Expand' : 'Minimise';
-  });
-  // One right-hand column, so the two menus stack instead of overlapping when either is expanded.
-  floatBox('', { top: '60px', right: '10px', padding: '0', background: 'none', boxShadow: 'none',
-    display: 'flex', flexDirection: 'column', alignItems: 'stretch', gap: '8px' }).append(lm, legend);
-  lm.querySelector('#lmMin').addEventListener('click', e => {
-    const body = lm.querySelector('#lmBody'), hide = body.style.display !== 'none';
-    body.style.display = hide ? 'none' : '';
-    e.target.textContent = hide ? '+' : '–';
-    e.target.title = hide ? 'Expand' : 'Minimise';
-  });
+  const lm = makeDock({ icon: 'landmark', title: 'Landmarks', open: false, body:
+    POI_CATEGORIES.map(([ft, label]) => `<label class="check"><input type="checkbox" data-ft="${ft}" ${shown.has(ft) ? 'checked' : ''}> ${label}</label>`).join('') });
+  // ----- School size legend: bottom-right above State; starts open, greys out on the first activity elsewhere -----
+  const legend = makeDock({ icon: 'school', title: 'School size', open: true, body: `
+    <div class="legendGrid">${SIZES.map(s => `<span title="${s.label}: ${s.range} students"><img src="${badgeUrl(s, '#3c4043')}" width="18" height="18" alt=""> ${s.label} <span class="hint">${s.range}</span></span>`).join('')}</div>
+    <div class="hint" style="margin-top:4px">Students · colour = band, grey = outside</div>` });
+  legend.id = 'legendDock';
+  cornerCol.prepend(legend);
+  // Any press, key or wheel outside the legend greys it; pressing the legend itself restores full colour.
+  ['pointerdown', 'keydown', 'wheel'].forEach(type => addEventListener(type, e => {
+    legend.classList.toggle('faded', !(e.target instanceof Node && legend.contains(e.target)));
+  }, { capture: true, passive: true }));
+  // One right-hand column, so the menus stack instead of overlapping when any is expanded.
+  floatBox('', {}).id = 'dockCol';
+  $('#dockCol').append(bandDock, lm);
   lm.addEventListener('change', e => {
     const ft = e.target.dataset.ft;
     if (!ft) return;
@@ -612,9 +642,17 @@ function VariantD() {
   });
   map.setOptions({ styles: poiStyles(shown) });
 
-  $('#q').addEventListener('input', renderResults);
-  $('#pick').addEventListener('change', e => { if (e.target.value) centreOn(FEATURES.find(f => f.id === e.target.value)); });
-  $('#results').addEventListener('click', e => { const li = e.target.closest('li[data-id]'); if (li) centreOn(FEATURES.find(f => f.id === li.dataset.id)); });
+  q.addEventListener('focus', () => { typed = false; q.select(); openResults(true); });
+  q.addEventListener('blur', () => { openResults(false); syncQuery(); });
+  q.addEventListener('input', () => { typed = true; qClear.hidden = !q.value; renderResults(); });
+  q.addEventListener('keydown', e => {
+    if (e.key === 'Escape') q.blur();
+    if (e.key === 'Enter') { const li = results.querySelector('li[data-id]'); if (li) { centreOn(FEATURES.find(f => f.id === li.dataset.id)); q.blur(); } }
+  });
+  // pointerdown would blur the field and close the list before the click lands
+  [results, qClear].forEach(el => el.addEventListener('pointerdown', e => { if (document.activeElement === q) e.preventDefault(); }));
+  results.addEventListener('click', e => { const li = e.target.closest('li[data-id]'); if (li) { centreOn(FEATURES.find(f => f.id === li.dataset.id)); q.blur(); } });
+  qClear.addEventListener('click', () => { q.value = ''; q.focus(); typed = true; qClear.hidden = true; renderResults(); });
   $('#r').addEventListener('input', e => { if (circle) circle.setRadius(+e.target.value); });
   $('#bandRows').addEventListener('change', e => {
     if (e.target.dataset.i === undefined) return;
@@ -634,38 +672,13 @@ function VariantD() {
     bands.push(Math.min(MAX_KM, +(maxKm() + 1).toFixed(1))); renderBandRows(); update();
   });
 
+  // The header and dock column take the top corners, so drop the map-type/fullscreen controls and move zoom off the pin button.
+  map.setOptions({ mapTypeControl: false, fullscreenControl: false, zoomControlOptions: { position: google.maps.ControlPosition.RIGHT_CENTER } });
+
   $('#r').max = maxKm() * 1000; $('#r').value = 1000;
   renderBandRows();
   update();
-  return () => {
-    click.remove(); circle && circle.setMap(null); guides.forEach(g => g.setMap(null));
-    proj.setMap(null); ghost.remove(); tip.remove();
-    removeEventListener('keydown', onKey); document.getElementById('schoolOverlay')?.remove();
-    map.setOptions({ styles: poiStyles(DEFAULT_POIS), draggableCursor: null });
-  };
 }
-
-// ---------- switcher ----------
-const RENDER = { A: VariantA, B: VariantB, C: VariantC, D: VariantD };
-let current = VARIANTS.includes(params.get('variant')) ? params.get('variant') : 'D';
-
-function render(v) {
-  clearAll();
-  current = v;
-  params.set('variant', v);
-  history.replaceState(null, '', '?' + params);
-  document.getElementById('vlabel').textContent = `${v} (${NAMES[v]})`;
-  cleanup = RENDER[v]();
-}
-function cycle(step) { render(VARIANTS[(VARIANTS.indexOf(current) + step + VARIANTS.length) % VARIANTS.length]); }
-document.getElementById('prev').onclick = () => cycle(-1);
-document.getElementById('next').onclick = () => cycle(1);
-addEventListener('keydown', e => {
-  if (e.target.closest('input, textarea, select, [contenteditable]')) return;
-  if (document.getElementById('schoolOverlay')) return; // don't switch variants under an open overlay
-  if (e.key === 'ArrowLeft') cycle(-1);
-  if (e.key === 'ArrowRight') cycle(1);
-});
 
 // Google's landmark categories (legacy JSON map styling). Each is all-or-nothing: malls can't be split from poi.business.
 const POI_CATEGORIES = [
@@ -692,7 +705,7 @@ function poiStyles(shown) {
 
 window.initMap = () => {
   map = new google.maps.Map(document.getElementById('map'), { center: ORIGIN, zoom: 13, clickableIcons: false, streetViewControl: false, styles: poiStyles(DEFAULT_POIS) });
-  render(current);
+  BufferMap();
 };
 
 if (KEY) {
@@ -701,7 +714,7 @@ if (KEY) {
   s.async = true;
   document.head.appendChild(s);
 } else {
-  document.getElementById('switcher').style.display = 'none';
+  cornerCol.style.display = 'none';
   document.getElementById('app').innerHTML = `<form id="keygate"><h3>Buffer Map prototype</h3>
     <p>Paste a Google Maps JavaScript API key. It goes into the URL only and is never stored.</p>
     <input name="key" placeholder="AIza..." autofocus><button>Load map</button></form>`;

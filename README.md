@@ -31,12 +31,8 @@ Steps:
 
 The `overlay-info` branch is published to <https://cl0udc0der.github.io/Pinpoint/> on every push, by `.github/workflows/pages.yml`. Only the `prototypes/buffer-map` folder is published. Open it with `?key=YOUR_GOOGLE_MAPS_KEY`, or paste a key when the page asks. Your key's website restrictions must allow `https://cl0udc0der.github.io/*`.
 
-### Switching variants
+### Using the map
 
-There are four variants: **D** (hybrid, the default), **A** (click to drop), **B** (pin + results list) and **C** (Feature as centre). To switch between them, do one of these:
-
-- add `&variant=A` (or `B`, `C`, `D`) to the URL
-- use the floating bar at the bottom of the page
-- press the ← / → keys
+Search for a school in the bar at the top, or use the pin button at the top right to place a buffer centre (tap **?** next to it for help). The pill under the search shows how many Features are inside the buffer, per band; tap it to list them. The menus on the right (Band edges, Landmarks) and the School size legend at the bottom right minimise to icons; the legend greys out once you start using the map.
 
 The map shows synthetic Features placed around Quezon City, not the real Dataset.
