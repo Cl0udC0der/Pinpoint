@@ -9,7 +9,11 @@
     D  Hybrid (default)    A's flexible buffer + C's band edges + school search. Place via the drop-pin button
                            (drag it onto the map, or click it to toggle pin mode) or centre on a
                            school; the buffer takes the colour of the band its radius has reached; last edge = max radius (10 km cap).
-                           Floating, minimisable Landmarks menu toggles each Google landmark category
+                           Floating, minimisable Landmarks menu toggles each Google landmark category.
+                           Hover a school for name + student count; click it (outside pin mode) for a Zillow-style
+                           overlay: photo collage, student-count headline, fact chips, lorem "What's special".
+                           School markers are Lucide size icons (house / house-plus / building / building-complex)
+                           in band-coloured badges, with a floating School size legend
     A  Click to drop       full-bleed map; click anywhere to set the centre; drag the circle's handles to resize
     B  Pin + results list  side panel listing Features inside, sorted by Distance; draggable centre pin
     C  Feature as centre   pick a school as the centre; concentric distance bands with counts per band
@@ -51,6 +55,47 @@
               background: #111; color: #fff; border-radius: 999px; padding: 6px 8px; display: flex; align-items: center; gap: 8px;
               box-shadow: 0 4px 14px rgba(0,0,0,.4); font-weight: 600; }
   #switcher button { background: #333; color: #fff; border: 0; border-radius: 999px; width: 30px; height: 30px; cursor: pointer; font-size: 16px; }
+  #schoolTip { position: fixed; z-index: 15; pointer-events: none; background: #fff; border-radius: 6px; padding: 6px 10px;
+               box-shadow: 0 2px 10px rgba(0,0,0,.3); transform: translate(-50%, calc(-100% - 12px)); white-space: nowrap; display: none; }
+
+  /* Zillow-style school overlay (variant D) */
+  #schoolOverlay { position: fixed; inset: 0; z-index: 30; background: rgba(0,0,0,.55); display: flex; justify-content: center; align-items: flex-start; padding: 24px 16px; }
+  #schoolOverlay [hidden] { display: none !important; }
+  #schoolOverlay .sheet { background: #fff; width: min(980px, 100%); max-height: 100%; overflow: auto; border-radius: 8px; box-shadow: 0 8px 40px rgba(0,0,0,.4); }
+  #schoolOverlay .topbar { position: sticky; top: 0; z-index: 1; background: #fff; display: flex; justify-content: space-between; align-items: center;
+                           padding: 10px 16px; border-bottom: 1px solid #e6e6e6; }
+  #schoolOverlay .brand { font-weight: 800; font-size: 18px; color: #0041d9; }
+  #schoolOverlay .actions { display: flex; gap: 4px; }
+  #schoolOverlay .actions button { background: none; border: 0; border-radius: 4px; padding: 6px 10px; font: inherit; font-weight: 600; color: #0041d9; cursor: pointer; }
+  #schoolOverlay .actions button:hover { background: #eef3ff; }
+  #schoolOverlay .collage { position: relative; display: grid; grid-template-columns: 2fr 1fr 1fr; grid-template-rows: 1fr 1fr; gap: 4px; height: 420px; padding: 0 0 0; }
+  #schoolOverlay .collage img { width: 100%; height: 100%; object-fit: cover; display: block; background: #ddd; }
+  #schoolOverlay .collage img:first-child { grid-row: 1 / 3; }
+  #schoolOverlay .seeAll { position: absolute; right: 12px; bottom: 12px; background: #fff; border: 1px solid #a7a6ab; border-radius: 6px; padding: 8px 12px; font-weight: 600; cursor: pointer; }
+  #schoolOverlay .gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 4px; }
+  #schoolOverlay .gallery img { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; display: block; background: #ddd; }
+  #schoolOverlay .body { padding: 20px 24px 32px; max-width: 720px; }
+  #schoolOverlay .headline { font-size: 32px; font-weight: 800; letter-spacing: -.5px; }
+  #schoolOverlay .facts { font-size: 18px; margin: 2px 0 6px; }
+  #schoolOverlay .facts b { font-weight: 700; }
+  #schoolOverlay .facts .sep { color: #a7a6ab; margin: 0 6px; }
+  #schoolOverlay .addr { color: #2a2a33; }
+  #schoolOverlay .chips { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 8px; margin: 18px 0 26px; }
+  #schoolOverlay .chip { background: #f1f1f4; border-radius: 6px; padding: 10px 12px; display: flex; gap: 8px; align-items: center; font-weight: 600; }
+  #schoolOverlay h2 { font-size: 22px; margin: 0 0 12px; }
+  #schoolOverlay .tags { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+  #schoolOverlay .tag { background: #e8f0fe; color: #1d2329; border-radius: 4px; padding: 3px 8px; font-size: 12px; font-weight: 700; text-transform: uppercase; }
+  #schoolOverlay .desc { line-height: 1.6; }
+  #schoolOverlay .desc.clamped { display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+  #schoolOverlay .more { background: none; border: 0; padding: 0; margin-top: 6px; color: #0041d9; font: inherit; font-weight: 600; cursor: pointer; }
+  @media (max-width: 640px) {
+    #schoolOverlay { padding: 0; }
+    #schoolOverlay .sheet { border-radius: 0; }
+    #schoolOverlay .collage { grid-template-columns: 1fr; grid-template-rows: 1fr; height: 260px; }
+    #schoolOverlay .collage img:not(:first-child) { display: none; }
+    #schoolOverlay .body { padding: 16px; }
+  }
+
   #keygate { max-width: 420px; margin: 15vh auto; padding: 16px; }
   #keygate input { width: 100%; padding: 8px; margin: 8px 0; }
 </style>
@@ -80,6 +125,23 @@ const FEATURES = Array.from({ length: 60 }, (_, i) => ({
   lat: ORIGIN.lat + (rand() - 0.5) * 0.14,
   lng: ORIGIN.lng + (rand() - 0.5) * 0.14,
 }));
+// Synthetic school details for D's tooltip + overlay. Own seed, so adding fields never moves the points above.
+{
+  let s2 = 7;
+  const r2 = () => (s2 = (s2 * 16807) % 2147483647) / 2147483647;
+  const pick = a => a[Math.floor(r2() * a.length)];
+  const STREETS = ['Mabini St.', 'Kalayaan Ave.', 'Maginhawa St.', 'Tandang Sora Ave.', 'Visayas Ave.', 'Anonas St.', 'Kamias Rd.', 'Aurora Blvd.'];
+  const BRGYS = ['Teachers Village', 'Project 4', 'Diliman', 'Cubao', 'Pinyahan', 'Bagong Silangan', 'Kamuning', 'Sikatuna Village'];
+  FEATURES.forEach(f => Object.assign(f, {
+    students: Math.round(50 * 200 ** (r2() ** 2)), // 50–10,000 skewed small: ~58% small, ~13% medium, ~9% large, ~20% mega
+    grades: pick(['K–6', 'Grades 7–10', 'Grades 7–12', 'Grades 11–12', 'K–12']),
+    type: r2() < 0.6 ? 'Public' : 'Private',
+    founded: 1920 + Math.floor(r2() * 96),
+    ratio: 20 + Math.floor(r2() * 26),
+    address: `${1 + Math.floor(r2() * 300)} ${pick(STREETS)}, Brgy. ${pick(BRGYS)}, Quezon City`,
+    photos: 12 + Math.floor(r2() * 29),
+  }));
+}
 
 function distanceKm(a, b) {
   const R = 6371, toRad = d => d * Math.PI / 180;
@@ -275,7 +337,100 @@ function VariantD() {
     });
   }
 
-  drawFeatures(f => { if (pinMode) centreOn(f); });
+  drawFeatures(f => pinMode ? centreOn(f) : openOverlay(f));
+
+  // ----- school-size markers: Lucide icon (lucide-static 1.59.0) in a badge filled with the band colour -----
+  const SIZES = [
+    { max: 300, label: 'Small', range: '< 300', icon: '<path d="M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8"/><path d="M3 10a2 2 0 0 1 .709-1.528l7-6a2 2 0 0 1 2.582 0l7 6A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>' },
+    { max: 700, label: 'Medium', range: '300–699', icon: '<path d="M12.35 21H5a2 2 0 0 1-2-2v-9a2 2 0 0 1 .71-1.53l7-6a2 2 0 0 1 2.58 0l7 6A2 2 0 0 1 21 10v2.35"/><path d="M14.8 12.4A1 1 0 0 0 14 12h-4a1 1 0 0 0-1 1v8"/><path d="M15 18h6"/><path d="M18 15v6"/>' },
+    { max: 1500, label: 'Large', range: '700–1,499', icon: '<path d="M12 10h.01"/><path d="M12 14h.01"/><path d="M12 6h.01"/><path d="M16 10h.01"/><path d="M16 14h.01"/><path d="M16 6h.01"/><path d="M8 10h.01"/><path d="M8 14h.01"/><path d="M8 6h.01"/><path d="M9 22v-3a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v3"/><rect x="4" y="2" width="16" height="20" rx="2"/>' },
+    { max: Infinity, label: 'Mega', range: '1,500+', icon: '<path d="M10 12h4"/><path d="M10 8h4"/><path d="M14 21v-3a2 2 0 0 0-4 0v3"/><path d="M6 10H4a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-2"/><path d="M6 21V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v16"/>' },
+  ];
+  const sizeOf = f => SIZES.find(s => f.students < s.max);
+  const lucide = (size, px = 18) => `<svg xmlns="http://www.w3.org/2000/svg" width="${px}" height="${px}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle">${size.icon}</svg>`;
+  const badgeUrl = (size, fill) => 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(
+    `<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 28 28"><circle cx="14" cy="14" r="12.5" fill="${fill}" stroke="#fff" stroke-width="1.5"/>` +
+    `<g transform="translate(6 6) scale(.6667)" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">${size.icon}</g></svg>`);
+  // Band-coloured badge inside the buffer; smaller grey badge outside it.
+  function colourSchools(colourFor) {
+    FEATURES.forEach((f, i) => {
+      const fill = colourFor(f), px = fill ? 28 : 22;
+      featureMarkers[i].setIcon({ url: badgeUrl(sizeOf(f), fill || '#80868b'), scaledSize: new google.maps.Size(px, px), anchor: new google.maps.Point(px / 2, px / 2) });
+    });
+  }
+
+  // ----- hover tooltip: name + student count (replaces the native marker title) -----
+  const tip = document.createElement('div');
+  tip.id = 'schoolTip';
+  document.body.appendChild(tip);
+  FEATURES.forEach((f, i) => {
+    const m = featureMarkers[i];
+    m.setTitle(null);
+    m.addListener('mouseover', e => {
+      tip.innerHTML = `<b>${f.name}</b><br>${f.students.toLocaleString('en-US')} students · ${sizeOf(f).label}`;
+      Object.assign(tip.style, { display: 'block', left: e.domEvent.clientX + 'px', top: e.domEvent.clientY + 'px' });
+    });
+    m.addListener('mouseout', () => { tip.style.display = 'none'; });
+  });
+
+  // ----- Zillow-style overlay: photo collage, sub-header facts, chips, "What's special" (lorem) -----
+  const LOREM = 'Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum. Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium doloremque laudantium, totam rem aperiam, eaque ipsa quae ab illo inventore veritatis et quasi architecto beatae vitae dicta sunt explicabo.';
+  const photo = (f, n, w = 800, h = 600) => `https://picsum.photos/seed/${f.id}-${n}/${w}/${h}`;
+  function closeOverlay() {
+    const el = document.getElementById('schoolOverlay');
+    if (el) { el.remove(); update(); }
+  }
+  function openOverlay(f) {
+    tip.style.display = 'none';
+    closeOverlay();
+    const c = circle && ll(circle.getCenter());
+    const d = c && distanceKm(c, f);
+    const inBuffer = c && d <= circle.getRadius() / 1000;
+    const bi = inBuffer && bandIndexFor(d);
+    const band = !c ? null : inBuffer ? `Band ${bi ? bands[bi - 1] : 0}–${bands[bi]} km` : 'Outside buffer';
+    const chips = [['🏷️', `ID ${f.id}`], [lucide(sizeOf(f)), `${sizeOf(f).label} school`], ['🏫', f.type], ['📅', `Est. ${f.founded}`], ['👩‍🏫', `1:${f.ratio} student–teacher`], band && ['⭕', band]].filter(Boolean);
+    const el = document.createElement('div');
+    el.id = 'schoolOverlay';
+    el.innerHTML = `<div class="sheet" role="dialog" aria-label="${f.name}">
+      <div class="topbar"><span class="brand">Pinpoint</span>
+        <div class="actions"><button>♡ Save</button><button>↗ Share</button><button data-close title="Close (Esc)">✕</button></div></div>
+      <div class="collage">
+        ${[0, 1, 2, 3, 4].map(n => `<img src="${photo(f, n, n ? 400 : 900, n ? 300 : 700)}" alt="">`).join('')}
+        <button class="seeAll">▦ See all ${f.photos} photos</button>
+      </div>
+      <div class="gallery" hidden>${Array.from({ length: f.photos }, (_, n) => `<img loading="lazy" src="${photo(f, n, 440, 330)}" alt="">`).join('')}</div>
+      <div class="body">
+        <div class="headline">${f.students.toLocaleString('en-US')} students</div>
+        <div class="facts"><b>${f.grades}</b><span class="sep">|</span><b>${f.type}</b>${c ? `<span class="sep">|</span><b>${d.toFixed(1)} km</b> away` : ''}</div>
+        <div class="addr"><b>${f.name}</b> · ${f.address}</div>
+        <div class="chips">${chips.map(([i, t]) => `<div class="chip"><span>${i}</span>${t}</div>`).join('')}</div>
+        <h2>What's special</h2>
+        <div class="tags">${['Lorem ipsum', 'Dolor sit', 'Amet consectetur', 'Adipiscing', 'Sed do eiusmod'].map(t => `<span class="tag">${t}</span>`).join('')}</div>
+        <div class="desc clamped">${LOREM}<br><br>${LOREM}</div>
+        <button class="more">Show more</button>
+      </div></div>`;
+    document.body.appendChild(el);
+    el.addEventListener('click', e => {
+      if (e.target === el || e.target.closest('[data-close]')) return closeOverlay();
+      if (e.target.closest('.seeAll')) {
+        const g = el.querySelector('.gallery'), show = g.hidden;
+        g.hidden = !show; el.querySelector('.collage').hidden = show;
+        if (show) el.querySelector('.gallery').insertAdjacentHTML('beforebegin', '<button class="seeAll backToCollage" style="position:static;margin:8px 16px">← Back</button>');
+      }
+      if (e.target.closest('.backToCollage')) {
+        el.querySelector('.gallery').hidden = true; el.querySelector('.collage').hidden = false; e.target.remove();
+      }
+      if (e.target.closest('.more')) {
+        const clamped = el.querySelector('.desc').classList.toggle('clamped');
+        e.target.textContent = clamped ? 'Show more' : 'Show less';
+      }
+    });
+    showState({ variant: 'D', overlay: { id: f.id, name: f.name, students: f.students, grades: f.grades, type: f.type,
+      founded: f.founded, ratio: `1:${f.ratio}`, photos: f.photos, distanceKm: c ? +d.toFixed(3) : null, band } });
+  }
+  const onKey = e => { if (e.key === 'Escape') closeOverlay(); };
+  addEventListener('keydown', onKey);
+
   const box = floatBox(`
     <div class="hint">Drag the 📍 pin onto the map, or click it for pin mode (click it again to stop). Drag the circle to move it, or its handles to resize.</div>
     <button id="dropPin" style="margin:6px 0;padding:6px 10px;cursor:grab;touch-action:none;user-select:none">📍 Drop centre</button>
@@ -340,7 +495,7 @@ function VariantD() {
     renderResults();
     if (!circle) {
       $('#rv').textContent = '–'; $('#centreName').textContent = 'No buffer placed yet.'; $('#counts').innerHTML = '';
-      colourFeatures(() => null);
+      colourSchools(() => null);
       showState({ variant: 'D', pinMode, centre: null, bandEdgesKm: [...bands] });
       return;
     }
@@ -364,7 +519,7 @@ function VariantD() {
     const inside = FEATURES.filter(f => (!centredOn || f.id !== centredOn.id) && distanceKm(c, f) <= km);
     inside.forEach(f => perBand[bandIndexFor(distanceKm(c, f))].push(f.id));
     const bandOfId = Object.fromEntries(perBand.flatMap((ids, i) => ids.map(id => [id, i])));
-    colourFeatures(f => centredOn && f.id === centredOn.id ? '#000' : f.id in bandOfId ? colourOf(bandOfId[f.id]) : null);
+    colourSchools(f => centredOn && f.id === centredOn.id ? '#000' : f.id in bandOfId ? colourOf(bandOfId[f.id]) : null);
 
     $('#r').value = Math.round(circle.getRadius());
     $('#rv').textContent = `${km.toFixed(2)} km`;
@@ -425,7 +580,24 @@ function VariantD() {
     </div>
     <div id="lmBody" style="margin-top:6px">
       ${POI_CATEGORIES.map(([ft, label]) => `<label style="display:block"><input type="checkbox" data-ft="${ft}" ${shown.has(ft) ? 'checked' : ''}> ${label}</label>`).join('')}
-    </div>`, { top: '60px', right: '10px' });
+    </div>`, { position: 'static' });
+  const legend = floatBox(`
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:12px">
+      <b>School size</b><button id="lgMin" title="Minimise">–</button>
+    </div>
+    <div id="lgBody" style="margin-top:6px">
+      ${SIZES.map(s => `<div class="band"><img src="${badgeUrl(s, '#3c4043')}" width="22" height="22" alt=""> ${s.label} <span class="hint">${s.range} students</span></div>`).join('')}
+      <div class="hint" style="margin-top:4px">Badge colour = buffer band; grey = outside.</div>
+    </div>`, { position: 'static' });
+  legend.querySelector('#lgMin').addEventListener('click', e => {
+    const body = legend.querySelector('#lgBody'), hide = body.style.display !== 'none';
+    body.style.display = hide ? 'none' : '';
+    e.target.textContent = hide ? '+' : '–';
+    e.target.title = hide ? 'Expand' : 'Minimise';
+  });
+  // One right-hand column, so the two menus stack instead of overlapping when either is expanded.
+  floatBox('', { top: '60px', right: '10px', padding: '0', background: 'none', boxShadow: 'none',
+    display: 'flex', flexDirection: 'column', alignItems: 'stretch', gap: '8px' }).append(lm, legend);
   lm.querySelector('#lmMin').addEventListener('click', e => {
     const body = lm.querySelector('#lmBody'), hide = body.style.display !== 'none';
     body.style.display = hide ? 'none' : '';
@@ -467,7 +639,8 @@ function VariantD() {
   update();
   return () => {
     click.remove(); circle && circle.setMap(null); guides.forEach(g => g.setMap(null));
-    proj.setMap(null); ghost.remove();
+    proj.setMap(null); ghost.remove(); tip.remove();
+    removeEventListener('keydown', onKey); document.getElementById('schoolOverlay')?.remove();
     map.setOptions({ styles: poiStyles(DEFAULT_POIS), draggableCursor: null });
   };
 }
@@ -489,6 +662,7 @@ document.getElementById('prev').onclick = () => cycle(-1);
 document.getElementById('next').onclick = () => cycle(1);
 addEventListener('keydown', e => {
   if (e.target.closest('input, textarea, select, [contenteditable]')) return;
+  if (document.getElementById('schoolOverlay')) return; // don't switch variants under an open overlay
   if (e.key === 'ArrowLeft') cycle(-1);
   if (e.key === 'ArrowRight') cycle(1);
 });
