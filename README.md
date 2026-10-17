@@ -27,6 +27,10 @@ Steps:
 
    If you leave out `?key=`, the page asks you to paste a key. The key is only kept in the URL and is never stored.
 
+### Live demo (GitHub Pages)
+
+The `overlay-info` branch is published to <https://cl0udc0der.github.io/Pinpoint/> on every push, by `.github/workflows/pages.yml`. Only the `prototypes/buffer-map` folder is published. Open it with `?key=YOUR_GOOGLE_MAPS_KEY`, or paste a key when the page asks. Your key's website restrictions must allow `https://cl0udc0der.github.io/*`.
+
 ### Switching variants
 
 There are four variants: **D** (hybrid, the default), **A** (click to drop), **B** (pin + results list) and **C** (Feature as centre). To switch between them, do one of these:
