@@ -353,6 +353,10 @@ function VariantD() {
       const paths = inner > 0 ? [ringPath(c, outer), ringPath(c, inner).reverse()] : [ringPath(c, outer)];
       guides.push(new google.maps.Polygon({ map, paths, clickable: false, fillColor: colourOf(i), fillOpacity: .22,
         strokeColor: colourOf(i), strokeOpacity: .9, strokeWeight: 1 }));
+      // Max-range label on the ring's edge, at 45° (NE) to stay clear of the circle's N/E/S/W resize handles.
+      guides.push(new google.maps.Marker({ map, position: ringPath(c, outer, 8)[1], clickable: false, zIndex: 1000,
+        icon: { path: google.maps.SymbolPath.CIRCLE, scale: 0 },
+        label: { text: `${outer < edge ? 'max ' : ''}${edge} km`, color: '#1d2329', fontSize: '12px', fontWeight: '700' } }));
       inner = edge;
     });
 
