@@ -29,7 +29,7 @@ Steps:
 
 ### Live demo (GitHub Pages)
 
-The `overlay-info` branch is published to <https://cl0udc0der.github.io/Pinpoint/> on every push, by `.github/workflows/pages.yml`. Only the `prototypes/buffer-map` folder is published. Open it with `?key=YOUR_GOOGLE_MAPS_KEY`, or paste a key when the page asks. Your key's website restrictions must allow `https://cl0udc0der.github.io/*`.
+The `prototype/buffer-map` branch is published to <https://cl0udc0der.github.io/Pinpoint/> on every push, by `.github/workflows/pages.yml`. Only the `prototypes/buffer-map` folder is published. Open it with `?key=YOUR_GOOGLE_MAPS_KEY`, or paste a key when the page asks. Your key's website restrictions must allow `https://cl0udc0der.github.io/*`.
 
 ### Using the map
 

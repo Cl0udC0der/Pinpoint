@@ -4,7 +4,7 @@ name: Deploy prototype to Pages
 
 on:
   push:
-    branches: [overlay-info]
+    branches: [prototype/buffer-map]
   workflow_dispatch:
 
 permissions:
