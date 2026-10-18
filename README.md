@@ -36,3 +36,25 @@ The `prototype/buffer-map` branch is published to <https://cl0udc0der.github.io/
 Search for a school in the bar at the top, or use the pin button at the top right to place a buffer centre (tap **?** next to it for help). The pill under the search shows how many Features are inside the buffer, per band; tap it to list them. The menus on the right (Band edges, Landmarks) and the School size legend at the bottom right minimise to icons; the legend greys out once you start using the map.
 
 The map shows synthetic Features placed around Quezon City, not the real Dataset.
+
+## Database
+
+The schema lives in `db/`:
+
+| Path | What it is |
+|---|---|
+| `db/schema.sql` | Tables, indexes and views (SQLite). Design notes are in the header comment. |
+| `db/seed/reference.sql` | Fixed reference rows: school levels, grades, SHS strands and enrollment categories. |
+| `db/etl/load_deped_enrollment.py` | Loads one DepEd enrollment workbook into a database as a Snapshot. |
+
+To build a database (needs Python 3 and `pip install -r db/requirements.txt`):
+
+```sh
+python db/etl/load_deped_enrollment.py \
+    Data/deped_private_basic_education_schools_sy2025-2026.xlsx \
+    Data/pinpoint.sqlite --school-year "SY 2025-2026"
+```
+
+A missing database file is created from the schema and seed. The loader refuses a school year that is already loaded and checks every school's enrollment totals against the workbook's Directory tab before committing.
+
+`Data/` is git-ignored: source workbooks and built databases stay local.
